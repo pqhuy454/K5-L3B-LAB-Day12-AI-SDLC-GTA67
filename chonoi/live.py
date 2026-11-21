@@ -302,16 +302,13 @@ class _Handler(BaseHTTPRequestHandler):
                     ctype = "application/json"
                 elif filepath.lower().endswith(".jpg") or filepath.lower().endswith(".jpeg"):
                     ctype = "image/jpeg"
-                with open(filepath, "rb") as f:
-                    self._send(200, f.read(), ctype)
+                try:
+                    with open(filepath, "rb") as f:
+                        self._send(200, f.read(), ctype)
+                except OSError:
+                    self._send(404, b'{"error":"asset khong doc duoc"}')
             else:
                 self._send(404, b'{"error":"asset khong ton tai"}')
-                return
-            try:
-                with open(found[0], "rb") as f:
-                    self._send(200, f.read(), found[1])
-            except OSError:
-                self._send(404, b'{"error":"asset khong doc duoc"}')
         else:
             self._send(404, b'{"error":"khong co"}')
 
