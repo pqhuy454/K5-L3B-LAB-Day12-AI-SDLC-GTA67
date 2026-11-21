@@ -99,8 +99,10 @@ class GatherSim:
                      for f in sort_by_id(self.fish)],
         }
 
-    # --- một bước (bộ điều phối mỏng theo contracts/sim-hooks.md) ---------------
-    def _tick_timers(self, events):
+    # --- một bước ---------------------------------------------------------------
+    def step(self, inp):
+        events = []
+        # 1. đồng hồ và hàng có sẵn: giảm bộ đếm, nút mọc lại
         self.time_left_ticks = max(0, self.time_left_ticks - 1)
         self.invuln_ticks = max(0, self.invuln_ticks - 1)
         self.catch_cd_ticks = max(0, self.catch_cd_ticks - 1)
