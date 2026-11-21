@@ -7,10 +7,76 @@
 <style>
   html, body { margin: 0; height: 100%; background: #10161c; color: #e8eef2; font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; }
+  [hidden] { display: none !important; }
+  #intro { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 22px;
+    box-sizing: border-box; overflow-y: auto; background: radial-gradient(circle at 80% 18%, #e7a661 0, #a76d59 22%, #28505d 61%, #0a2230 100%); }
+  #intro::before { content: ""; position: absolute; inset: 57% 0 0; opacity: .25;
+    background: repeating-linear-gradient(175deg, transparent 0 25px, #f3c996 27px 29px, transparent 31px 49px); pointer-events: none; }
+  .intro-card { position: relative; width: min(1120px, 100%); display: grid; grid-template-columns: 1fr 1.04fr;
+    overflow: hidden; border: 1px solid rgba(255,231,185,.45); border-radius: 24px;
+    box-shadow: 0 24px 90px rgba(4,17,28,.55); background: #102a39; }
+  .intro-copy { position: relative; z-index: 1; padding: clamp(28px, 5vw, 72px); display: flex; flex-direction: column; justify-content: center; }
+  .intro-kicker { color: #ffd892; text-transform: uppercase; letter-spacing: .22em; font-size: 12px; font-weight: 700; }
+  .intro-copy h1 { font-size: clamp(45px, 5.3vw, 78px); line-height: .99; letter-spacing: -.045em; margin: 18px 0 20px; color: #fff3d7; text-wrap: balance; }
+  .intro-copy p { color: #d3e4e2; font-size: 17px; line-height: 1.6; max-width: 390px; margin: 0 0 28px; }
+  .intro-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; }
+  .intro-controls span { padding: 7px 10px; border: 1px solid rgba(217,238,230,.25); border-radius: 7px; color: #ebf4e6; font-size: 12px; background: rgba(255,255,255,.06); }
+  #intro-start { align-self: flex-start; border: 0; border-radius: 10px; padding: 15px 28px; background: #ffd07c;
+    color: #173240; font: 700 17px system-ui, sans-serif; cursor: pointer; box-shadow: 0 6px 0 #b77e43; }
+  #intro-start:hover { background: #ffe0a2; transform: translateY(-2px); box-shadow: 0 8px 0 #b77e43; }
+  #intro-start:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+  #intro-start:disabled { opacity: .65; cursor: wait; }
+  #intro-status { min-height: 20px; margin-top: 16px; color: #ffcfbd; font-size: 13px; }
+  .intro-art { position: relative; min-height: 560px; background: linear-gradient(#d8896e 0%, #f3b678 44%, #416d76 45%, #0c3c56 100%); }
+  .intro-art svg { display: block; width: 100%; height: 100%; position: absolute; inset: 0; }
+  .intro-caption { position: absolute; right: 22px; bottom: 20px; padding: 8px 12px; border-radius: 6px;
+    color: #fff1d4; background: rgba(7,34,48,.75); font-size: 12px; letter-spacing: .08em; }
+  @media (max-width: 780px) { .intro-card { grid-template-columns: 1fr; } .intro-art { min-height: 230px; order: -1; }
+    .intro-copy { padding: 30px; } .intro-copy h1 { font-size: clamp(38px, 9vw, 58px); } .intro-copy p { font-size: 15px; margin-bottom: 18px; }
+    .intro-controls { margin-bottom: 22px; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="intro" hidden role="dialog" aria-modal="true" aria-labelledby="intro-title">
+  <div class="intro-card">
+    <div class="intro-copy">
+      <div class="intro-kicker">Một ngày trên chợ nổi</div>
+      <h1 id="intro-title">Quán Ăn<br>Chợ Nổi</h1>
+      <p id="intro-story">Theo Út Sen lặn tìm cá và bông dưới sông. Khi cập bến, mang nguyên liệu về quán để Bà Tư nấu cho khách.</p>
+      <div class="intro-controls" aria-label="Điều khiển">
+        <span>WASD · Di chuyển</span><span>E · Tương tác</span><span>Space · Bắt cá</span>
+      </div>
+      <button id="intro-start" type="button">Bắt đầu ngày mới ↗</button>
+      <div id="intro-status" role="status" aria-live="polite"></div>
+    </div>
+    <div class="intro-art" aria-hidden="true">
+      <svg viewBox="0 0 600 560" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="introSky" x2="0" y2="1"><stop stop-color="#c47f70"/><stop offset=".62" stop-color="#ffc486"/><stop offset="1" stop-color="#f6dda4"/></linearGradient>
+          <linearGradient id="introRiver" x2="0" y2="1"><stop stop-color="#6d9f9a"/><stop offset="1" stop-color="#0c3c56"/></linearGradient>
+        </defs>
+        <rect width="600" height="560" fill="url(#introSky)"/>
+        <circle cx="416" cy="142" r="81" fill="#ffe1a0" opacity=".9"/>
+        <path d="M0 256 Q90 236 174 259 T350 255 T600 252 V560 H0Z" fill="#577967" opacity=".66"/>
+        <path d="M0 288 Q150 268 310 284 T600 279 V560 H0Z" fill="url(#introRiver)"/>
+        <path d="M0 315 Q150 298 300 315 T600 315 M0 370 Q150 350 300 367 T600 363 M0 452 Q150 434 300 452 T600 448" fill="none" stroke="#c1d6bb" stroke-width="3" opacity=".28"/>
+        <path d="M100 267 V172 M137 273 V170 M458 271 V185 M491 275 V183" stroke="#344f42" stroke-width="8"/>
+        <path d="M69 184 Q117 141 166 181 M428 195 Q472 158 518 192" fill="none" stroke="#406d49" stroke-width="21" stroke-linecap="round"/>
+        <path d="M68 304 H340 L317 336 Q194 361 87 333Z" fill="#6d3c2f" stroke="#e6ab72" stroke-width="5"/>
+        <path d="M109 301 V246 H299 V303" fill="#a85d39" stroke="#70402f" stroke-width="6"/>
+        <path d="M94 246 L206 188 L318 246Z" fill="#d7784d" stroke="#70402f" stroke-width="6"/>
+        <rect x="136" y="259" width="39" height="42" rx="4" fill="#ffe4aa"/><rect x="226" y="259" width="39" height="42" rx="4" fill="#ffe4aa"/>
+        <path d="M351 367 Q430 390 542 367 L511 393 Q425 414 371 389Z" fill="#874b35" stroke="#f2ba77" stroke-width="4"/>
+        <path d="M441 376 V317" stroke="#593e30" stroke-width="5"/><path d="M446 321 Q485 331 493 355 L446 357Z" fill="#f7e3b1"/>
+        <path d="M55 429 Q105 409 155 429 M301 486 Q350 468 402 487 M455 460 Q507 441 554 460" fill="none" stroke="#93c7bd" stroke-width="3" opacity=".6"/>
+        <path d="M55 525 Q65 478 68 438 M70 526 Q90 475 96 443 M89 525 Q105 496 126 481" fill="none" stroke="#5f9f77" stroke-width="7" stroke-linecap="round"/>
+        <path d="M502 519 Q510 473 520 444 M523 523 Q542 468 548 451 M545 524 Q561 491 578 481" fill="none" stroke="#70ab7c" stroke-width="7" stroke-linecap="round"/>
+      </svg>
+      <div class="intro-caption">LẶN BUỔI SÁNG · MỞ QUÁN BUỔI TỐI</div>
+    </div>
+  </div>
+</div>
 <script>
 "use strict";
 /*
@@ -23,6 +89,33 @@
 const cv = document.getElementById("c");
 const ctx = cv.getContext("2d");
 let snap = null, offline = false;
+const intro = document.getElementById("intro");
+const introButton = document.getElementById("intro-start");
+const introStatus = document.getElementById("intro-status");
+let starting = false;
+function syncIntro() {
+  const waiting = !!(snap && snap.awaiting_start);
+  intro.hidden = !waiting;
+  if (!waiting) { starting = false; introButton.disabled = false; introStatus.textContent = ""; return; }
+  const evening = snap.mode === "quan";
+  document.getElementById("intro-story").textContent = evening
+    ? "Bà Tư đã sẵn sàng mở quán. Đón khách, nấu món họ gọi và phục vụ trước khi họ hết kiên nhẫn."
+    : "Theo Út Sen lặn tìm cá và bông dưới sông. Khi cập bến, mang nguyên liệu về quán để Bà Tư nấu cho khách.";
+  introButton.textContent = evening ? "Mở quán buổi tối ↗" : "Bắt đầu ngày mới ↗";
+}
+async function beginGame() {
+  if (starting || !snap || !snap.awaiting_start) return;
+  starting = true; introButton.disabled = true; introStatus.textContent = "Đang chuẩn bị lượt chơi…";
+  try {
+    const r = await fetch("/start", { method: "POST" });
+    if (!r.ok) throw new Error("Không thể bắt đầu lượt chơi");
+    introStatus.textContent = "";
+  } catch (e) {
+    introStatus.textContent = "Không kết nối được máy chủ. Hãy thử lại.";
+    starting = false; introButton.disabled = false;
+  }
+}
+introButton.addEventListener("click", beginGame);
 
 // ---------- vào: phím ----------
 const down = new Set();
@@ -57,6 +150,10 @@ function keyName(e) { return e.key.length === 1 ? e.key.toLowerCase() : e.key.to
 let showPressLog = true;
 addEventListener("keydown", (e) => {
   const k = keyName(e);
+  if (!intro.hidden) {
+    if (k === "enter" || k === " ") { e.preventDefault(); beginGame(); }
+    return;
+  }
   if (e.repeat) { if (k === " " || k.startsWith("arrow")) e.preventDefault(); return; }
   console.debug("[phím] xuống", k, "tick", snap && snap.tick, "mode", snap && snap.mode);
   if (k === "l") { showPressLog = !showPressLog; return; }
@@ -89,6 +186,7 @@ async function poll() {
     const r = await fetch("/state", { cache: "no-store" });
     snap = await r.json();
     offline = false;
+    syncIntro();
   } catch (e) { offline = true; }
   setTimeout(poll, 16);
 }

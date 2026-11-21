@@ -8,6 +8,7 @@ Máy chủ HTTP nhỏ (ThreadingHTTPServer) phục vụ `chonoi/web/index.html` 
     POST /restart -> chơi lại buổi hiện tại (cùng seed, cùng scenario/kho)
     POST /next    -> (chỉ trang trí, chế độ "một ngày") buổi sáng đã kết thúc thì mở buổi tối với kho vừa thu
     POST /new-day -> quay về buổi sáng ban đầu
+    POST /start   -> bắt đầu lượt chơi sau màn intro (chỉ CLI live)
     GET  /assets/<tên ngắn>.png hoặc /assets/<đường dẫn trong thư mục assets/> (chỉ ảnh/âm thanh)
 
 Chuyển cảnh sáng → tối chỉ có ở cửa sổ chơi; headless vẫn là hai tiến trình riêng qua file kho (Contract G).
@@ -107,7 +108,8 @@ class LiveGame:
     Mở bằng --mode gather thì chơi được "một ngày": hết buổi sáng -> /next mở buổi tối với kho vừa thu.
     """
 
-    def __init__(self, mode, tuning, scenario, seed, inventory=None, inventory_out=None, input_log=None):
+    def __init__(self, mode, tuning, scenario, seed, inventory=None, inventory_out=None, input_log=None,
+                 auto_start=True):
         self._day_args = (mode, tuning, scenario, seed, inventory)
         self._args = self._day_args
         self.mode = mode
@@ -118,6 +120,7 @@ class LiveGame:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
+        self.started = auto_start
         self._reset()
 
     def _reset(self):
@@ -177,6 +180,11 @@ class LiveGame:
             self._reset()
             self._log_system("[N] ngày mới")
 
+    def begin(self):
+        with self._lock:
+            self.started = True
+            self.inputs = LiveInputs()
+
     # --- luồng nền ----------------------------------------------------------------
     def start(self):
         self._thread = threading.Thread(target=self._loop, name="chonoi-sim", daemon=True)
@@ -206,6 +214,8 @@ class LiveGame:
                 nxt = time.perf_counter()
 
     def _tick_once(self):
+        if not self.started:
+            return
         s = self.session
         if s.done:
             return
@@ -237,6 +247,7 @@ class LiveGame:
             snap["error"] = self.error
             snap["can_continue"] = self.can_continue()
             snap["day_mode"] = self._day_args[0]
+            snap["awaiting_start"] = not self.started
             snap["presses"] = self.presses[-8:]
             return json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
@@ -288,20 +299,9 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 self._send(404, b'{"error":"thieu index.html"}')
         elif path.startswith("/assets/"):
-            rel = urllib.parse.unquote(path[len("/assets/"):].lstrip("/\\"))
-            filepath = os.path.normpath(os.path.join(ASSETS_DIR, rel))
-            if filepath.startswith(ASSETS_DIR) and os.path.isfile(filepath):
-                ctype = "application/octet-stream"
-                if filepath.lower().endswith(".png"):
-                    ctype = "image/png"
-                elif filepath.lower().endswith(".svg"):
-                    ctype = "image/svg+xml"
-                elif filepath.lower().endswith(".mp3"):
-                    ctype = "audio/mpeg"
-                elif filepath.lower().endswith(".json"):
-                    ctype = "application/json"
-                elif filepath.lower().endswith(".jpg") or filepath.lower().endswith(".jpeg"):
-                    ctype = "image/jpeg"
+            asset = resolve_asset(path[len("/assets/"):])
+            if asset:
+                filepath, ctype = asset
                 try:
                     with open(filepath, "rb") as f:
                         self._send(200, f.read(), ctype)
@@ -336,6 +336,8 @@ class _Handler(BaseHTTPRequestHandler):
                     return
             elif path == "/new-day":
                 self.game.new_day()
+            elif path == "/start":
+                self.game.begin()
             else:
                 self._send(404, b'{"error":"khong co"}')
                 return
@@ -401,7 +403,8 @@ def main(argv=None) -> int:
         inventory = read_inventory(a.inventory) if a.inventory else None
         if inventory is not None and "stock" in scenario:
             raise BadInput("vừa có quan.stock vừa có --inventory")
-        game = LiveGame(a.mode, tuning, scenario, a.seed, inventory, a.inventory_out, a.input_log)
+        game = LiveGame(a.mode, tuning, scenario, a.seed, inventory, a.inventory_out, a.input_log,
+                        auto_start=False)
         server = LiveServer(game, a.host, a.port)
     except BadInput as e:
         sys.stderr.write(f"đầu vào sai: {e}\n")

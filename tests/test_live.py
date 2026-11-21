@@ -27,6 +27,29 @@ def _post(url, obj):
 
 
 class LiveServerTest(unittest.TestCase):
+    def test_intro_holds_clock_until_start(self):
+        tuning = load_contract()["tuning"]
+        server = LiveServer(LiveGame("gather", tuning, {}, 1, auto_start=False), port=0)
+        server.start()
+        try:
+            base = f"http://127.0.0.1:{server.port}"
+            time.sleep(0.1)
+            state = json.loads(_get(base + "/state")[1])
+            self.assertTrue(state["awaiting_start"])
+            self.assertEqual(state["tick"], 0)
+            self.assertIn(b'id="intro"', _get(base + "/")[1])
+            self.assertEqual(_post(base + "/start", {}), 200)
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                state = json.loads(_get(base + "/state")[1])
+                if state["tick"] > 0:
+                    break
+                time.sleep(0.02)
+            self.assertFalse(state["awaiting_start"])
+            self.assertGreater(state["tick"], 0)
+        finally:
+            server.stop()
+
     def test_state_input_and_clean_stop(self):
         tuning = load_contract()["tuning"]
         server = LiveServer(LiveGame("gather", tuning, {}, 1), port=0)  # cổng ngẫu nhiên
