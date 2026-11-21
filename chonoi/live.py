@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .contract import load_contract
@@ -28,13 +29,14 @@ from .inventory import read_inventory
 from .runner import Session
 from .scenario import load_scenario
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ASSETS_DIR = os.path.realpath(os.path.join(ROOT_DIR, "assets"))
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-ASSET_DIR = os.path.join(os.path.dirname(WEB_DIR), "..", "assets")
-# Chỉ phục vụ những sprite giao diện dùng; không mở quyền đọc tùy ý từ thư mục dự án.
+# Tên ngắn cho vài sprite hay dùng (giữ tương thích client cũ / test).
 SPRITE_FILES = {
     "diver.png": ("SpearFishing Assets Pack", "Sprites", "Diver-32x32", "Diver 1.png"),
-    "fish-linh.png": ("SpearFishing Assets Pack", "Sprites", "Fish1 - 16x16", "Orange.png"),
-    "fish-loc.png": ("SpearFishing Assets Pack", "Sprites", "Fish2 - 32x16", "Blue.png"),
+    "fish-linh.png": ("SpearFishing Assets Pack", "Sprites", "Fish3 - 32x16", "Grey.png"),
+    "fish-loc.png": ("Nền sông và nhân vật", "PNG", "enemies", "fish-big.png"),
     "seaweed.png": ("SpearFishing Assets Pack", "Sprites", "SeaWeed - 16x32", "Medium.png"),
     "coral.png": ("SpearFishing Assets Pack", "Sprites", "Corals - 16x16", "Corals.png"),
     "sand.png": ("SpearFishing Assets Pack", "Sprites", "Tiles - 16x16", "Sand.png"),
@@ -43,9 +45,26 @@ SPRITE_FILES = {
     "stove.png": ("Restaurant Assets Pack", "Tiles", "RestaurantFixtures", "fooddrink_restaurant_fixtures_stove_commercial_six_burner_01.png"),
     "lights.png": ("Restaurant Assets Pack", "Tiles", "CafeProps", "fooddrink_cafe_props_string_lights_warm_segment_01.png"),
 }
+ASSET_TYPES = {".png": "image/png", ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".svg": "image/svg+xml", ".ogg": "audio/ogg"}
 TICK_S = 1.0 / 60.0
 MAX_BODY = 4096
 RECENT_EVENTS = 40
+
+
+def resolve_asset(name: str):
+    """URL /assets/<name> -> (đường dẫn file, content-type) hoặc None. Không cho thoát khỏi thư mục assets/."""
+    if name in SPRITE_FILES:
+        path = os.path.join(ASSETS_DIR, *SPRITE_FILES[name])
+    else:
+        rel = urllib.parse.unquote(name).replace("\\", "/").lstrip("/")
+        path = os.path.realpath(os.path.join(ASSETS_DIR, rel))
+        if os.path.commonpath([ASSETS_DIR, path]) != ASSETS_DIR:
+            return None
+    ctype = ASSET_TYPES.get(os.path.splitext(path)[1].lower())
+    if ctype is None or not os.path.isfile(path):
+        return None
+    return path, ctype
 
 
 class LiveGame:
@@ -168,13 +187,16 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError:
                 self._send(404, b'{"error":"thieu index.html"}')
-        elif path.startswith("/assets/") and path[len("/assets/"):] in SPRITE_FILES:
-            name = path[len("/assets/"):]
+        elif path.startswith("/assets/"):
+            found = resolve_asset(path[len("/assets/"):])
+            if found is None:
+                self._send(404, b'{"error":"asset khong ton tai"}')
+                return
             try:
-                with open(os.path.join(ASSET_DIR, *SPRITE_FILES[name]), "rb") as f:
-                    self._send(200, f.read(), "image/png")
+                with open(found[0], "rb") as f:
+                    self._send(200, f.read(), found[1])
             except OSError:
-                self._send(404, b'{"error":"thieu sprite"}')
+                self._send(404, b'{"error":"asset khong doc duoc"}')
         else:
             self._send(404, b'{"error":"khong co"}')
 

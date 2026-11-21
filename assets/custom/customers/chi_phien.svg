@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" class="char state-idle">
+  <style>
+    .body-root { transform-origin: 64px 96px; }
+    .head { transform-origin: 64px 50px; }
+    .arm-l { transform-origin: 41px 60px; }
+    .arm-r { transform-origin: 87px 60px; }
+    .leg-l { transform-origin: 53px 86px; }
+    .leg-r { transform-origin: 75px 86px; }
+    .shadow { transform-origin: 64px 117px; }
+
+    .state-idle .body-root { animation: idle-bob 1.8s ease-in-out infinite; }
+    .state-idle .arm-l { animation: idle-arm 1.8s ease-in-out infinite; }
+    .state-idle .arm-r { animation: idle-arm 1.8s ease-in-out infinite reverse; }
+
+    .state-walk .body-root { animation: walk-bob 0.45s ease-in-out infinite; }
+    .state-walk .leg-l { animation: walk-limb 0.45s ease-in-out infinite; }
+    .state-walk .leg-r { animation: walk-limb 0.45s ease-in-out infinite reverse; }
+    .state-walk .arm-l { animation: walk-limb 0.45s ease-in-out infinite reverse; }
+    .state-walk .arm-r { animation: walk-limb 0.45s ease-in-out infinite; }
+    .state-walk .shadow { animation: walk-shadow 0.45s ease-in-out infinite; }
+
+    .state-sit .body-root { transform: translateY(7px); animation: sit-bob 2.1s ease-in-out infinite; }
+    .state-sit .leg-l, .state-sit .leg-r { transform: translateY(-6px) scaleY(0.55); }
+    .state-sit .arm-l { transform: rotate(-10deg); }
+    .state-sit .arm-r { transform: rotate(10deg); }
+
+    .state-eat .body-root { transform: translateY(7px); }
+    .state-eat .leg-l, .state-eat .leg-r { transform: translateY(-6px) scaleY(0.55); }
+    .state-eat .head { animation: eat-nod 0.55s ease-in-out infinite; }
+    .state-eat .arm-r { animation: eat-arm 0.55s ease-in-out infinite; }
+    .state-eat .arm-l { transform: rotate(-12deg); }
+
+    .state-impatient .body-root { animation: imp-shake 0.22s linear infinite; }
+    .state-impatient .leg-l, .state-impatient .leg-r { transform: translateY(-6px) scaleY(0.55); }
+    .state-impatient .arm-l { transform: rotate(-18deg); }
+    .state-impatient .arm-r { transform: rotate(18deg); }
+
+    @keyframes idle-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+    @keyframes idle-arm { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(4deg); } }
+    @keyframes walk-bob { 0%,100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-4px) rotate(-2deg); } 75% { transform: translateY(-4px) rotate(2deg); } }
+    @keyframes walk-limb { 0%,100% { transform: rotate(-18deg); } 50% { transform: rotate(18deg); } }
+    @keyframes walk-shadow { 0%,100% { transform: scaleX(1); } 50% { transform: scaleX(0.86); } }
+    @keyframes sit-bob { 0%,100% { transform: translateY(7px); } 50% { transform: translateY(5.5px); } }
+    @keyframes eat-nod { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(2.5px) rotate(4deg); } }
+    @keyframes eat-arm { 0%,100% { transform: rotate(8deg); } 50% { transform: rotate(42deg); } }
+    @keyframes imp-shake { 0%,100% { transform: translate(-2.5px, 7px); } 50% { transform: translate(2.5px, 7px); } }
+  </style>
+  <ellipse class="shadow" cx="64" cy="117" rx="25" ry="6" fill="#000" opacity="0.16"/>
+  <g class="body-root">
+    <g class="leg-l">
+      <rect x="46" y="92" width="13" height="16" rx="5" fill="#F2B98A" stroke="#1E242B" stroke-width="3"/>
+      <ellipse cx="52.5" cy="111" rx="9" ry="5.5" fill="#FACC15" stroke="#1E242B" stroke-width="3"/>
+    </g>
+    <g class="leg-r">
+      <rect x="69" y="92" width="13" height="16" rx="5" fill="#F2B98A" stroke="#1E242B" stroke-width="3"/>
+      <ellipse cx="75.5" cy="111" rx="9" ry="5.5" fill="#FACC15" stroke="#1E242B" stroke-width="3"/>
+    </g>
+    <g class="arm-l">
+      <path d="M43 56 C27 59 23 75 28 87 C32 93 40 90 41 83 C42 75 43 70 46 67 Z" fill="#F2B98A" stroke="#1E242B" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M37 60 C30 63 27 72 30 81 C32 84 37 83 38 78 C39 72 40 66 42 63 Z" fill="#334155" opacity="0.65"/>
+    </g>
+    <g class="arm-r">
+      <path d="M85 56 C101 59 105 75 100 87 C96 93 88 90 87 83 C86 75 85 70 82 67 Z" fill="#F2B98A" stroke="#1E242B" stroke-width="3" stroke-linejoin="round"/>
+    </g>
+    <g class="torso">
+      <path d="M44 82 L84 82 L86 98 L67 98 L64 92 L61 98 L42 98 Z" fill="#5B21B6" stroke="#1E242B" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M43 54 Q64 49 85 54 L84 86 Q64 89 44 86 Z" fill="#FACC15" stroke="#1E242B" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M51 53 Q64 63 77 53" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+      <path d="M51 53 Q64 63 77 53" fill="none" stroke="#5B21B6" stroke-width="1.8" stroke-linecap="round"/>
+      <text x="64" y="79" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-size="18" font-weight="900" fill="#4C1D95" stroke="#FFFFFF" stroke-width="1">84</text>
+    </g>
+    <g class="head">
+      <rect x="56" y="48" width="16" height="9" rx="4" fill="#E3A372" stroke="#1E242B" stroke-width="2.5"/>
+      <circle cx="43" cy="39" r="4.5" fill="#F2B98A" stroke="#1E242B" stroke-width="2.5"/>
+      <circle cx="85" cy="39" r="4.5" fill="#F2B98A" stroke="#1E242B" stroke-width="2.5"/>
+      <ellipse cx="64" cy="38" rx="20" ry="19.5" fill="#F2B98A" stroke="#1E242B" stroke-width="3"/>
+      <path d="M45 31 C45 19 53 15 64 15 C75 15 83 19 83 31 C78 25 71 23 64 23 C57 23 50 25 45 31 Z" fill="#181C22" stroke="#1E242B" stroke-width="2.8" stroke-linejoin="round"/>
+      <path d="M51 34 Q55 32 59 34" fill="none" stroke="#1E242B" stroke-width="2.4" stroke-linecap="round"/>
+      <path d="M69 34 Q73 32 77 34" fill="none" stroke="#1E242B" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="55" cy="38.5" r="2.6" fill="#1E242B"/>
+      <circle cx="73" cy="38.5" r="2.6" fill="#1E242B"/>
+      <circle cx="56" cy="37.7" r="0.9" fill="#FFF"/>
+      <circle cx="74" cy="37.7" r="0.9" fill="#FFF"/>
+      <path d="M57 45.5 Q64 43 71 45.5" fill="none" stroke="#374151" stroke-width="2" stroke-linecap="round"/>
+      <path d="M58 48.5 Q64 53 70 48.5 Z" fill="#FFFFFF" stroke="#1E242B" stroke-width="2" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>
