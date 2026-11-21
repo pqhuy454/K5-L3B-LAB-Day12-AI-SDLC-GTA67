@@ -5,7 +5,12 @@
 Máy chủ HTTP nhỏ (ThreadingHTTPServer) phục vụ `chonoi/web/index.html` và hai API:
     GET  /state  -> snapshot JSON hiện tại (cùng trường như dòng snapshot của headless) + `meta` + `events`
     POST /input  -> {"move": [a, b], "interact": bool, "catch": bool}   (trạng thái phím đang giữ)
-    POST /restart -> chơi lại từ đầu (cùng seed, cùng scenario)
+    POST /restart -> chơi lại buổi hiện tại (cùng seed, cùng scenario/kho)
+    POST /next    -> (chỉ trang trí, chế độ "một ngày") buổi sáng đã kết thúc thì mở buổi tối với kho vừa thu
+    POST /new-day -> quay về buổi sáng ban đầu
+    GET  /assets/<tên ngắn>.png hoặc /assets/<đường dẫn trong thư mục assets/> (chỉ ảnh/âm thanh)
+
+Chuyển cảnh sáng → tối chỉ có ở cửa sổ chơi; headless vẫn là hai tiến trình riêng qua file kho (Contract G).
 
 Mô phỏng chạy 60 tick/s trong một luồng nền, dùng CÙNG lớp sim như headless (qua `runner.Session`).
 Client chỉ ĐỌC snapshot và tự bỏ qua trường chưa có, nên luật do nhóm viết thêm trường nào cũng không vỡ.
@@ -14,27 +19,31 @@ Ngẫu nhiên vẫn đi qua `Streams` (seed); chỉ nhịp chạy theo đồng h
 
 import argparse
 import json
+import math
 import os
 import sys
 import threading
 import time
 import traceback
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .contract import load_contract
 from .errors import BadInput
+from .ids import id_key
 from .inputs import LiveInputs
 from .inventory import read_inventory
 from .runner import Session
 from .scenario import load_scenario
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ASSETS_DIR = os.path.realpath(os.path.join(ROOT_DIR, "assets"))
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-ASSET_DIR = os.path.join(os.path.dirname(WEB_DIR), "..", "assets")
-# Chỉ phục vụ những sprite giao diện dùng; không mở quyền đọc tùy ý từ thư mục dự án.
+# Tên ngắn cho vài sprite hay dùng (giữ tương thích client cũ / test).
 SPRITE_FILES = {
     "diver.png": ("SpearFishing Assets Pack", "Sprites", "Diver-32x32", "Diver 1.png"),
-    "fish-linh.png": ("SpearFishing Assets Pack", "Sprites", "Fish1 - 16x16", "Orange.png"),
-    "fish-loc.png": ("SpearFishing Assets Pack", "Sprites", "Fish2 - 32x16", "Blue.png"),
+    "fish-linh.png": ("SpearFishing Assets Pack", "Sprites", "Fish3 - 32x16", "Grey.png"),
+    "fish-loc.png": ("Nền sông và nhân vật", "PNG", "enemies", "fish-big.png"),
     "seaweed.png": ("SpearFishing Assets Pack", "Sprites", "SeaWeed - 16x32", "Medium.png"),
     "coral.png": ("SpearFishing Assets Pack", "Sprites", "Corals - 16x16", "Corals.png"),
     "sand.png": ("SpearFishing Assets Pack", "Sprites", "Tiles - 16x16", "Sand.png"),
@@ -43,30 +52,130 @@ SPRITE_FILES = {
     "stove.png": ("Restaurant Assets Pack", "Tiles", "RestaurantFixtures", "fooddrink_restaurant_fixtures_stove_commercial_six_burner_01.png"),
     "lights.png": ("Restaurant Assets Pack", "Tiles", "CafeProps", "fooddrink_cafe_props_string_lights_warm_segment_01.png"),
 }
+ASSET_TYPES = {".png": "image/png", ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".svg": "image/svg+xml", ".ogg": "audio/ogg"}
 TICK_S = 1.0 / 60.0
 MAX_BODY = 4096
 RECENT_EVENTS = 40
+RECENT_PRESSES = 30
+BUTTON_NAME = {"interact": "E", "catch": "Space"}
+
+
+def describe_press(sim, mode, tuning) -> str:
+    """Mô tả ngữ cảnh lúc bấm nút (CHỈ để log/gỡ lỗi; không ảnh hưởng luật)."""
+    if mode == "quan":
+        r = tuning["quan"]["interact_radius"]
+        cands = sorted(((math.dist(sim.pos, o["pos"]), rank, id_key(o["id"]), kind, o)
+                        for rank, kind, arr in ((0, "bếp", sim.stoves), (1, "bàn", sim.tables)) for o in arr),
+                       key=lambda c: c[:3])
+        hand = sim.hand or "trống"
+        if not cands:
+            return f"không có bếp/bàn · tay {hand}"
+        d, _, _, kind, o = cands[0]
+        if d > r:
+            return f"không có bếp/bàn trong {r} m (gần nhất {kind} {o['id']} cách {d:.2f} m) · tay {hand}"
+        if kind == "bếp":
+            detail = f"bếp {o.get('state')}" + (f", món {o.get('dish')}" if o.get("dish") else "")
+        else:
+            cust = next((c for c in sim.customers if c.get("table_id") == o["id"]), None)
+            detail = (f"khách {cust['id']} {cust.get('state')} gọi {cust.get('dish_id') or cust.get('dish')}"
+                      if cust else "bàn trống")
+        return f"mục tiêu {kind} {o['id']} cách {d:.2f} m ({detail}) · tay {hand}"
+    at_surface = sim.pos[1] <= tuning["gather"]["surface_depth"]
+    return (("mặt nước" if at_surface else f"dưới nước d={sim.pos[1]:.1f}") +
+            f" · giỏ {len(sim.hold)}/{tuning['gather']['hold_capacity']}")
+
+
+def resolve_asset(name: str):
+    """URL /assets/<name> -> (đường dẫn file, content-type) hoặc None. Không cho thoát khỏi thư mục assets/."""
+    if name in SPRITE_FILES:
+        path = os.path.join(ASSETS_DIR, *SPRITE_FILES[name])
+    else:
+        rel = urllib.parse.unquote(name).replace("\\", "/").lstrip("/")
+        path = os.path.realpath(os.path.join(ASSETS_DIR, rel))
+        if os.path.commonpath([ASSETS_DIR, path]) != ASSETS_DIR:
+            return None
+    ctype = ASSET_TYPES.get(os.path.splitext(path)[1].lower())
+    if ctype is None or not os.path.isfile(path):
+        return None
+    return path, ctype
 
 
 class LiveGame:
-    """Một lượt chơi + luồng nền bước 60 tick/s. Mọi truy cập trạng thái đi qua khóa."""
+    """Một lượt chơi + luồng nền bước 60 tick/s. Mọi truy cập trạng thái đi qua khóa.
 
-    def __init__(self, mode, tuning, scenario, seed, inventory=None, inventory_out=None):
-        self._args = (mode, tuning, scenario, seed, inventory)
+    Mở bằng --mode gather thì chơi được "một ngày": hết buổi sáng -> /next mở buổi tối với kho vừa thu.
+    """
+
+    def __init__(self, mode, tuning, scenario, seed, inventory=None, inventory_out=None, input_log=None):
+        self._day_args = (mode, tuning, scenario, seed, inventory)
+        self._args = self._day_args
         self.mode = mode
         self.tuning = tuning
         self.inventory_out = inventory_out
+        self.input_log_path = input_log     # file log nút (tùy chọn), ghi nối tiếp
+        self.presses = []                   # log nút gần nhất, gửi kèm /state
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
         self._reset()
 
     def _reset(self):
+        self.mode = self._args[0]
         self.session = Session(*self._args)
         self.inputs = LiveInputs()
         self.events = []
         self._saved = False
         self.error = None
+
+    def _log(self, entry: dict):
+        """Ghi một dòng log nút: terminal + bộ đệm cho client (+ file nếu có --input-log)."""
+        self.presses.append(entry)
+        del self.presses[:-RECENT_PRESSES]
+        sys.stderr.write(f"[nút] {entry['text']}\n")
+        if self.input_log_path:
+            try:
+                with open(self.input_log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except OSError as e:
+                sys.stderr.write(f"lỗi ghi log nút: {e}\n")
+
+    def _log_press(self, pressed, context, event_names):
+        keys = "+".join(BUTTON_NAME[b] for b in pressed)
+        if event_names:
+            result = "→ " + ", ".join(event_names)
+            ok = True
+        else:
+            result = "→ KHÔNG có sự kiện (nút không có tác dụng)"
+            ok = False
+        tick = self.session.tick
+        self._log({"tick": tick, "mode": self.mode, "keys": keys, "context": context, "events": event_names,
+                   "ok": ok, "text": f"t{tick} {self.mode} [{keys}] {context} {result}"})
+
+    def _log_system(self, what: str):
+        self._log({"tick": self.session.tick, "mode": self.mode, "keys": "", "context": what, "events": [],
+                   "ok": True, "text": f"t{self.session.tick} {self.mode} {what}"})
+
+    def can_continue(self) -> bool:
+        return self.mode == "gather" and self.session.done and self.error is None
+
+    def next_phase(self) -> bool:
+        """Buổi sáng xong -> buổi tối, kho = giỏ còn lại (ngất thì rỗng). Trả False nếu chưa chuyển được."""
+        with self._lock:
+            if not self.can_continue():
+                return False
+            items = self.session.sim.inventory_items()
+            _, tuning, _, seed, _ = self._day_args
+            self._args = ("quan", tuning, {}, seed, items)
+            self._reset()
+            self._log_system(f"[Enter] chuyển sang buổi tối, kho {items}")
+            return True
+
+    def new_day(self):
+        with self._lock:
+            self._args = self._day_args
+            self._reset()
+            self._log_system("[N] ngày mới")
 
     # --- luồng nền ----------------------------------------------------------------
     def start(self):
@@ -100,9 +209,15 @@ class LiveGame:
         s = self.session
         if s.done:
             return
-        for row in s.step(self.inputs.advance()):
+        inp = self.inputs.advance()
+        pressed = [b for b in BUTTON_NAME if inp.pressed(b)]
+        context = describe_press(s.sim, self.mode, self.tuning) if pressed else None
+        rows = s.step(inp)
+        for row in rows:
             self.events.append(row)
         del self.events[:-RECENT_EVENTS]
+        if pressed:
+            self._log_press(pressed, context, [r["name"] for r in rows])
         if s.done and not self._saved:
             self._saved = True
             if self.inventory_out:
@@ -120,6 +235,9 @@ class LiveGame:
             snap["finished"] = self.session.done
             snap["reason"] = self.session.sim.reason if self.session.done else None
             snap["error"] = self.error
+            snap["can_continue"] = self.can_continue()
+            snap["day_mode"] = self._day_args[0]
+            snap["presses"] = self.presses[-8:]
             return json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
     def set_input(self, body: dict):
@@ -141,6 +259,7 @@ class LiveGame:
     def restart(self):
         with self._lock:
             self._reset()
+            self._log_system("[R] chơi lại buổi này")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -168,13 +287,16 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError:
                 self._send(404, b'{"error":"thieu index.html"}')
-        elif path.startswith("/assets/") and path[len("/assets/"):] in SPRITE_FILES:
-            name = path[len("/assets/"):]
+        elif path.startswith("/assets/"):
+            found = resolve_asset(path[len("/assets/"):])
+            if found is None:
+                self._send(404, b'{"error":"asset khong ton tai"}')
+                return
             try:
-                with open(os.path.join(ASSET_DIR, *SPRITE_FILES[name]), "rb") as f:
-                    self._send(200, f.read(), "image/png")
+                with open(found[0], "rb") as f:
+                    self._send(200, f.read(), found[1])
             except OSError:
-                self._send(404, b'{"error":"thieu sprite"}')
+                self._send(404, b'{"error":"asset khong doc duoc"}')
         else:
             self._send(404, b'{"error":"khong co"}')
 
@@ -196,6 +318,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self.game.set_input(body)
             elif path == "/restart":
                 self.game.restart()
+            elif path == "/next":
+                if not self.game.next_phase():
+                    self._send(409, b'{"error":"buoi sang chua ket thuc"}')
+                    return
+            elif path == "/new-day":
+                self.game.new_day()
             else:
                 self._send(404, b'{"error":"khong co"}')
                 return
@@ -243,6 +371,7 @@ def main(argv=None) -> int:
     p.add_argument("--scenario")
     p.add_argument("--inventory", help="chỉ với quan: nạp kho từ file")
     p.add_argument("--inventory-out", dest="inventory_out", help="chỉ với gather: ghi kho khi kết thúc buổi")
+    p.add_argument("--input-log", dest="input_log", help="ghi log từng lần bấm E/Space (JSON lines) vào file này")
     a = p.parse_args(argv)
     try:
         if a.inventory and a.mode != "quan":
@@ -254,7 +383,7 @@ def main(argv=None) -> int:
         inventory = read_inventory(a.inventory) if a.inventory else None
         if inventory is not None and "stock" in scenario:
             raise BadInput("vừa có quan.stock vừa có --inventory")
-        game = LiveGame(a.mode, tuning, scenario, a.seed, inventory, a.inventory_out)
+        game = LiveGame(a.mode, tuning, scenario, a.seed, inventory, a.inventory_out, a.input_log)
         server = LiveServer(game, a.host, a.port)
     except BadInput as e:
         sys.stderr.write(f"đầu vào sai: {e}\n")
@@ -263,6 +392,9 @@ def main(argv=None) -> int:
         sys.stderr.write(f"không mở được cổng {a.port}: {e}\n")
         return 1
     server.start()
+    for stream in (sys.stdout, sys.stderr):  # console Windows (cp1252) không in được tiếng Việt
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     print(f"Mở trình duyệt tại {server.url}  (chế độ {a.mode}, seed {a.seed}). Ctrl+C để dừng.", flush=True)
     try:
         while True:
