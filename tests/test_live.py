@@ -44,6 +44,16 @@ class LiveServerTest(unittest.TestCase):
             code, html = _get(base + "/")
             self.assertEqual(code, 200)
             self.assertIn(b"<canvas", html)
+            code, sprite = _get(base + "/assets/diver.png")
+            self.assertEqual(code, 200)
+            self.assertTrue(sprite.startswith(b"\x89PNG\r\n\x1a\n"))
+            for asset in ("table", "stove", "lights"):
+                code, sprite = _get(base + f"/assets/{asset}.png")
+                self.assertEqual(code, 200)
+                self.assertTrue(sprite.startswith(b"\x89PNG\r\n\x1a\n"))
+            with self.assertRaises(urllib.error.HTTPError) as missing:
+                _get(base + "/assets/not-allowed.png")
+            self.assertEqual(missing.exception.code, 404)
             deadline = time.time() + 3
             while time.time() < deadline:
                 st2 = json.loads(_get(base + "/state")[1])

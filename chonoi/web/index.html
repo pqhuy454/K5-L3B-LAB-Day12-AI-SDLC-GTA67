@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quán Ăn Chợ Nổi — chơi thử</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #10161c; color: #e8eef2; font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #142632; color: #f8f1df; font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; }
 </style>
 </head>
@@ -15,7 +15,7 @@
 "use strict";
 /*
  * Client chơi trực tiếp (starter). CHỈ ĐỌC snapshot từ GET /state và gửi phím qua POST /input.
- * Trường nào snapshot chưa có thì bỏ qua (nhóm viết luật tới đâu, hình hiện tới đó). Hình khối tạm, thay bằng đồ họa của nhóm.
+ * Trường nào snapshot chưa có thì bỏ qua (nhóm viết luật tới đâu, hình hiện tới đó).
  * Phím: WASD / mũi tên = di chuyển · E = interact · Space = catch · R = chơi lại.
  */
 const cv = document.getElementById("c");
@@ -85,12 +85,34 @@ poll();
 const KIND_COLOR = { ca_loc: "#7c9a52", ca_linh: "#d6e6f2", ca_keo: "#d9a066", bong_dien_dien: "#f2c230", bong_sung: "#e8799c", keo_neo: "#8fcf6b" };
 const KIND_NAME = { ca_loc: "cá lóc", ca_linh: "cá linh", ca_keo: "cá kèo", bong_dien_dien: "điên điển", bong_sung: "bông súng", keo_neo: "kèo nèo" };
 const kc = (k) => KIND_COLOR[k] || "#bbbbbb";
+const SPRITES = {};
+for (const name of ["diver", "fish-linh", "fish-loc", "seaweed", "coral", "sand", "bubble", "table", "stove", "lights"]) {
+  const img = new Image();
+  img.src = `/assets/${name}.png`;
+  SPRITES[name] = img;
+}
+function sprite(name, x, y, dw, dh, fw, fh, frame = 0) {
+  const img = SPRITES[name];
+  if (!img || !img.complete || !img.naturalWidth) return false;
+  const cols = Math.floor(img.naturalWidth / fw);
+  const col = frame % cols, row = Math.floor(frame / cols);
+  ctx.drawImage(img, col * fw, row * fh, fw, fh,
+                Math.round(x), Math.round(y), Math.round(dw), Math.round(dh));
+  return true;
+}
+function imageSprite(name, x, y, dw, dh) {
+  const img = SPRITES[name];
+  if (!img || !img.complete || !img.naturalWidth) return false;
+  ctx.drawImage(img, Math.round(x), Math.round(y), Math.round(dw), Math.round(dh));
+  return true;
+}
 
 function fit() {
   const dpr = window.devicePixelRatio || 1;
   const w = innerWidth, h = innerHeight;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = false;
   return [w, h];
 }
 function text(s, x, y, o = {}) {
@@ -136,12 +158,28 @@ function drawGather(w, h) {
   const s = Math.max(1, Math.min((w - 20) / (X + 4), (h - top - bottom) / (D + SKY + 1)));
   const ox = (w - s * (X + 4)) / 2 + 2 * s, oy = top + SKY * s;
   const sx = (x) => ox + x * s, sy = (d) => oy + d * s;
-  // trời + nước
-  ctx.fillStyle = "#cfeaf5"; ctx.fillRect(0, top, w, SKY * s);
+  // Bình minh và nước sông. Các chi tiết trang trí không tác động tới mô phỏng.
+  const sky = ctx.createLinearGradient(0, top, 0, oy);
+  sky.addColorStop(0, "#edb886"); sky.addColorStop(1, "#f7dfb1");
+  ctx.fillStyle = sky; ctx.fillRect(0, top, w, SKY * s);
+  ctx.fillStyle = "#f7d18a"; ctx.beginPath(); ctx.arc(sx(81), sy(-3.3), 2.2 * s, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#53674e";
+  for (const x of [10, 24, 67, 90]) {
+    ctx.fillRect(sx(x), sy(-2.7), 0.35 * s, 2.7 * s);
+    ctx.beginPath(); ctx.ellipse(sx(x + 0.2), sy(-2.9), 1.9 * s, 0.55 * s, -0.2, 0, Math.PI * 2); ctx.fill();
+  }
   const g = ctx.createLinearGradient(0, oy, 0, sy(D));
-  g.addColorStop(0, "#49b0dc"); g.addColorStop(1, "#08243f");
-  ctx.fillStyle = g; ctx.fillRect(sx(0), oy, X * s, D * s);
-  ctx.strokeStyle = "#e9f7ff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(0), oy); ctx.lineTo(sx(X), oy); ctx.stroke();
+  g.addColorStop(0, "#6aa9a6"); g.addColorStop(0.55, "#286a76"); g.addColorStop(1, "#133e55");
+  ctx.fillStyle = g; ctx.fillRect(0, oy, w, h - bottom - oy);
+  ctx.fillStyle = "#29444b"; ctx.fillRect(0, sy(D), w, Math.max(0, h - bottom - sy(D)));
+  ctx.strokeStyle = "#f6e2b0"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(0), oy); ctx.lineTo(sx(X), oy); ctx.stroke();
+  // Đáy sông, rong và san hô dùng sprite có sẵn trong pack.
+  ctx.fillStyle = "#9d846e"; ctx.fillRect(sx(0), sy(D) - 0.45 * s, X * s, 0.45 * s);
+  for (let x = 0; x < X; x += 1.5) sprite("sand", sx(x), sy(D) - 0.9 * s, 1.5 * s, 0.9 * s, 16, 16);
+  for (const x of [8, 20, 38, 55, 73, 94]) sprite("seaweed", sx(x) - 0.8 * s, sy(D) - 2.6 * s, 1.6 * s, 2.6 * s, 16, 32);
+  for (const x of [14, 47, 83]) sprite("coral", sx(x) - 0.8 * s, sy(D) - 1.6 * s, 1.6 * s, 1.6 * s, 16, 16);
+  for (const [x, d] of [[17, 8], [18, 11], [36, 19], [61, 7], [79, 14]])
+    sprite("bubble", sx(x) - 0.35 * s, sy(d) - 0.35 * s, 0.7 * s, 0.7 * s, 8, 8);
   // vạch độ sâu
   for (let d = 5; d <= D; d += 5) {
     ctx.strokeStyle = "rgba(255,255,255,.08)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(sx(0), sy(d)); ctx.lineTo(sx(X), sy(d)); ctx.stroke();
@@ -157,7 +195,8 @@ function drawGather(w, h) {
   (snap.nodes || []).forEach((n) => {
     const ready = n.ready !== false;
     ctx.globalAlpha = ready ? 1 : 0.35;
-    ctx.fillStyle = kc(n.kind); ctx.beginPath(); ctx.ellipse(sx(n.pos[0]), sy(n.pos[1]) - 0.1 * s, 0.9 * s, 0.4 * s, 0, 0, Math.PI * 2); ctx.fill();
+    sprite("seaweed", sx(n.pos[0]) - 0.6 * s, sy(n.pos[1]) - 1.5 * s, 1.2 * s, 1.5 * s, 16, 32);
+    ctx.fillStyle = kc(n.kind); ctx.beginPath(); ctx.ellipse(sx(n.pos[0]), sy(n.pos[1]) - 1.5 * s, 0.48 * s, 0.25 * s, 0, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
     text(n.id, sx(n.pos[0]), sy(n.pos[1]) - 0.7 * s, { size: 10, align: "center", color: "#234" });
     if (!ready && n.regrow_ticks) text(Math.ceil(n.regrow_ticks / 60) + "s", sx(n.pos[0]), sy(n.pos[1]) + 1.1 * s, { size: 10, align: "center", color: "#fff" });
@@ -165,9 +204,12 @@ function drawGather(w, h) {
   // đàn cá
   (snap.fish || []).forEach((f) => {
     ctx.save(); ctx.translate(sx(f.pos[0]), sy(f.pos[1])); ctx.rotate(((f.heading_deg || 0) * Math.PI) / 180);
-    ctx.fillStyle = kc(f.kind);
-    ctx.beginPath(); ctx.ellipse(0, 0, 0.9 * s, 0.45 * s, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(-0.8 * s, 0); ctx.lineTo(-1.4 * s, -0.4 * s); ctx.lineTo(-1.4 * s, 0.4 * s); ctx.fill();
+    const linh = f.kind === "ca_linh";
+    if (!sprite(linh ? "fish-linh" : "fish-loc", (linh ? -1.1 : -1.5) * s,
+                (linh ? -1.1 : -0.75) * s, (linh ? 2.2 : 3) * s,
+                (linh ? 2.2 : 1.5) * s, linh ? 16 : 32, 16, Math.floor(snap.tick / 12) % 4)) {
+      ctx.fillStyle = kc(f.kind); ctx.beginPath(); ctx.ellipse(0, 0, s, 0.45 * s, 0, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.restore();
     text(f.id, sx(f.pos[0]), sy(f.pos[1]) - 0.7 * s, { size: 10, align: "center", color: "rgba(255,255,255,.8)" });
   });
@@ -179,12 +221,15 @@ function drawGather(w, h) {
     if (meta.catch_radius && underwater) { ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.beginPath(); ctx.arc(px, py, meta.catch_radius * s, 0, Math.PI * 2); ctx.stroke(); }
     if (meta.interact_radius && !underwater) { ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.beginPath(); ctx.arc(px, py, meta.interact_radius * s, 0, Math.PI * 2); ctx.stroke(); }
     if (!(p.invuln_ticks > 0 && Math.floor(snap.tick / 5) % 2)) {
-      ctx.fillStyle = "#ff8a3d"; ctx.beginPath(); ctx.arc(px, py, 0.6 * s, 0, Math.PI * 2); ctx.fill();
-      const a = ((p.heading_deg || 0) * Math.PI) / 180;
-      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * 0.9 * s, py + Math.sin(a) * 0.9 * s); ctx.stroke();
+      const diverSize = Math.max(28, 2.7 * s);
+      if (!sprite("diver", px - diverSize / 2, py - diverSize / 2,
+                  diverSize, diverSize, 32, 32, Math.floor(snap.tick / 10) % 6)) {
+        ctx.fillStyle = "#ff8a3d"; ctx.beginPath(); ctx.arc(px, py, 0.6 * s, 0, Math.PI * 2); ctx.fill();
+      }
     }
   }
   // HUD trên
+  ctx.fillStyle = "rgba(12,32,42,.9)"; ctx.fillRect(0, 0, w, top);
   text("⏱ " + fmtTime(snap.time_left_ticks), 14, 28, { size: 20 });
   if (p && p.oxygen_ticks !== undefined && p.oxygen_max_ticks) {
     const low = p.oxygen_ticks < p.oxygen_max_ticks * 0.25;
@@ -198,6 +243,7 @@ function drawGather(w, h) {
   if (p && p.pos) text(`x ${p.pos[0].toFixed(1)}  d ${p.pos[1].toFixed(1)}`, 14, 52, { size: 12, color: "#9fb3c0" });
   if (p && p.catch_cd_ticks > 0) text("hồi chiêu bắt " + (p.catch_cd_ticks / 60).toFixed(1) + "s", 150, 52, { size: 12, color: "#9fb3c0" });
   // giỏ (khoang) dưới
+  ctx.fillStyle = "rgba(12,32,42,.9)"; ctx.fillRect(0, h - bottom, w, bottom);
   if (snap.hold && snap.hold_capacity) {
     const cap = snap.hold_capacity, sz = Math.min(30, (w - 260) / cap - 4), y0 = h - bottom + 8;
     for (let i = 0; i < cap; i++) {
@@ -208,7 +254,7 @@ function drawGather(w, h) {
     const names = {}; snap.hold.forEach((k) => (names[k] = (names[k] || 0) + 1));
     text("Giỏ " + snap.hold.length + "/" + cap + "  " + Object.keys(names).map((k) => (KIND_NAME[k] || k) + "×" + names[k]).join(", "), 14, y0 + sz + 16, { size: 12, color: "#cfd8dc" });
   }
-  text("WASD/mũi tên bơi · E hái / cập bến · Space bắt cá · R chơi lại", w - 10, h - 14, { size: 12, align: "right", color: "#9fb3c0" });
+  text("WASD/mũi tên bơi · E cập bến (hái đang phát triển) · Space bắt cá (đang phát triển) · R chơi lại", w - 10, h - 14, { size: 12, align: "right", color: "#9fb3c0" });
 }
 
 // ----- cảnh QUÁN: nhìn từ trên xuống, x sang phải, z lên (bắc) -----
@@ -220,12 +266,20 @@ function drawQuan(w, h) {
   const ox = (w - s * X) / 2, oy = top;
   const sx = (x) => ox + x * s, sy = (z) => oy + (Z - z) * s;
   ctx.fillStyle = "#c9a36b"; ctx.fillRect(sx(0), sy(Z), X * s, Z * s);
+  ctx.strokeStyle = "rgba(109,74,43,.12)"; ctx.lineWidth = 1;
+  for (let x = 0; x <= X; x++) { ctx.beginPath(); ctx.moveTo(sx(x), sy(Z)); ctx.lineTo(sx(x), sy(0)); ctx.stroke(); }
+  for (let z = 0; z <= Z; z++) { ctx.beginPath(); ctx.moveTo(sx(0), sy(z)); ctx.lineTo(sx(X), sy(z)); ctx.stroke(); }
   ctx.strokeStyle = "#6b4a2b"; ctx.lineWidth = 4; ctx.strokeRect(sx(0), sy(Z), X * s, Z * s);
+  for (let x = 1; x < X - 2; x += 3) imageSprite("lights", sx(x), sy(Z) - .5 * s, 2.7 * s, 1.2 * s);
   // bếp
   (snap.stoves || []).forEach((st) => {
     const col = st.state === "cooking" ? "#e8892b" : st.state === "ready" ? "#6fbf5a" : "#6d6d72";
-    ctx.fillStyle = col; ctx.fillRect(sx(st.pos[0]) - 0.8 * s, sy(st.pos[1]) - 0.8 * s, 1.6 * s, 1.6 * s);
-    text(st.id, sx(st.pos[0]), sy(st.pos[1]) + 4, { size: 12, align: "center", color: "#111" });
+    const stoveSize = 2.2 * s;
+    if (!imageSprite("stove", sx(st.pos[0]) - stoveSize / 2, sy(st.pos[1]) - stoveSize / 2, stoveSize, stoveSize)) {
+      ctx.fillStyle = col; ctx.fillRect(sx(st.pos[0]) - 0.8 * s, sy(st.pos[1]) - 0.8 * s, 1.6 * s, 1.6 * s);
+    }
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(sx(st.pos[0]) + .75 * s, sy(st.pos[1]) - .7 * s, .18 * s, 0, Math.PI * 2); ctx.fill();
+    text(st.id, sx(st.pos[0]), sy(st.pos[1]) + .85 * s, { size: 12, align: "center", color: "#fff" });
     if (st.dish) text(st.dish, sx(st.pos[0]), sy(st.pos[1]) - 0.95 * s, { size: 10, align: "center", color: "#2a1a0a" });
     if (st.state === "cooking" && st.cook_ticks_left !== undefined) text(Math.ceil(st.cook_ticks_left / 60) + "s", sx(st.pos[0]), sy(st.pos[1]) + 1.25 * s, { size: 11, align: "center", color: "#2a1a0a" });
   });
@@ -234,8 +288,11 @@ function drawQuan(w, h) {
   const byTable = {};
   (snap.customers || []).forEach((c) => (byTable[c.table_id] = c));
   (snap.tables || []).forEach((tb) => {
-    ctx.fillStyle = "#8a5a2e"; ctx.beginPath(); ctx.arc(sx(tb.pos[0]), sy(tb.pos[1]), 0.9 * s, 0, Math.PI * 2); ctx.fill();
-    text(tb.id, sx(tb.pos[0]), sy(tb.pos[1]) + 4, { size: 12, align: "center", color: "#fff" });
+    const tableSize = 2.3 * s;
+    if (!imageSprite("table", sx(tb.pos[0]) - tableSize / 2, sy(tb.pos[1]) - tableSize / 2, tableSize, tableSize)) {
+      ctx.fillStyle = "#8a5a2e"; ctx.beginPath(); ctx.arc(sx(tb.pos[0]), sy(tb.pos[1]), 0.9 * s, 0, Math.PI * 2); ctx.fill();
+    }
+    text(tb.id, sx(tb.pos[0]), sy(tb.pos[1]) + .9 * s, { size: 12, align: "center", color: "#fff" });
     const c = byTable[tb.id];
     if (c) {
       const cx = sx(tb.pos[0]), cy = sy(tb.pos[1]) - 1.5 * s;
