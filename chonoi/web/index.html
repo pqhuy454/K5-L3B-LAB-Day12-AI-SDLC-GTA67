@@ -923,24 +923,9 @@ function drawQuan(w, h) {
   drawSpriteFit("cutting_board", sx(3.92), sy(8.1) - 0.24 * s, 0.48 * s);
   drawSpriteFit("plates_tower", sx(4.48), sy(8.1) - 0.28 * s, 0.48 * s);
 
-  // 3. Góc trang trí ép sát mép phải & lối vào (ghế trái flipX=true quay mặt vào bàn)
-  // Bàn vuông góc trên phải (T2 decor)
-  drawSpriteFit("chair", sx(12.55), sy(8.05), 0.78 * s, null, true);
-  drawSpriteFit("chair", sx(14.65), sy(8.05), 0.78 * s, null, false);
-  drawSpriteFit("table_square", sx(13.6), sy(8.0), 1.55 * s);
-  drawSpriteFit("flower_vase", sx(13.6), sy(8.0) - 0.28 * s, 0.44 * s);
-
-  // Bàn gia đình góc dưới phải (T3 decor)
-  drawSpriteFit("chair", sx(12.35), sy(2.45), 0.78 * s, null, true);
-  drawSpriteFit("chair", sx(14.85), sy(2.45), 0.78 * s, null, false);
-  drawSpriteFit("table_family", sx(13.6), sy(2.4), 1.85 * s);
-  drawSpriteFit("condiment", sx(13.6), sy(2.4) - 0.22 * s, 0.36 * s);
-
-  // Lối vào phía dưới (cạnh chữ LỐI VÀO x ≈ 5.6)
+  // 3. Trang trí lối vào & đèn mây (mọi bàn trên sàn T1, T2, T3 đều là bàn đón khách thật từ snap.tables)
   drawSpriteFit("menu_easel", sx(4.1), sy(1.35), 0.95 * s);
   drawSpriteFit("host_stand", sx(6.7), sy(1.35), 0.95 * s);
-
-  // 2 Đèn mây ấm ở 2 góc phải
   drawSpriteFit("lamp", sx(14.9), sy(8.9), 0.95 * s);
   drawSpriteFit("lamp", sx(14.9), sy(1.3), 0.95 * s);
 

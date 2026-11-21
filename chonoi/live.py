@@ -53,7 +53,7 @@ SPRITE_FILES = {
     "lights.png": ("Restaurant Assets Pack", "Tiles", "CafeProps", "fooddrink_cafe_props_string_lights_warm_segment_01.png"),
 }
 ASSET_TYPES = {".png": "image/png", ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-               ".svg": "image/svg+xml", ".ogg": "audio/ogg"}
+               ".svg": "image/svg+xml", ".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".json": "application/json"}
 TICK_S = 1.0 / 60.0
 MAX_BODY = 4096
 RECENT_EVENTS = 40
@@ -392,6 +392,12 @@ def main(argv=None) -> int:
             raise BadInput("--inventory-out chỉ dùng với gather")
         tuning = load_contract()["tuning"]
         scenario = load_scenario(a.scenario, a.mode, tuning)
+        # Sáng tạo chỉ bật ở chế độ chơi live (tắt ở headless): mở thêm 2 bàn T2 (trái dưới) & T3 (trên phải)
+        if "tables" not in scenario:
+            existing_ids = {tb["id"] for tb in tuning["quan"]["tables"]}
+            for extra in ({"id": "T2", "pos": [2.2, 2.6]}, {"id": "T3", "pos": [13.2, 7.6]}):
+                if extra["id"] not in existing_ids:
+                    tuning["quan"]["tables"].append(extra)
         inventory = read_inventory(a.inventory) if a.inventory else None
         if inventory is not None and "stock" in scenario:
             raise BadInput("vừa có quan.stock vừa có --inventory")
