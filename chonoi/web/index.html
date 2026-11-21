@@ -1191,11 +1191,47 @@ function drawQuan(w, h) {
   // Phát giọng nói nhân vật theo sự kiện trong cast.json
   processCastAudio(snap.events);
 
-  // 10. HUD
-  text("⏱ " + fmtTime(snap.time_left_ticks), 14, 28, { size: 20, color: "#ffd54f" });
-  text(`Tiền: ${snap.money ?? 0}k · Uy tín: ${(snap.reputation ?? 0).toFixed(1)} ⭐ · Điểm: ${snap.score ?? 0}`, 120, 28, { size: 16, color: "#fff" });
-  const stock = snap.stock ? Object.keys(snap.stock).map((k) => (KIND_NAME[k] || k) + "×" + snap.stock[k]).join(", ") : "";
-  text("Kho sẵn có: " + (stock || "(trống)"), 14, 52, { size: 13, color: "#b0bec5" });
+  // 10. HUD thanh trên cùng (không che khu vực quán)
+  ctx.fillStyle = "rgba(11, 22, 32, 0.88)";
+  ctx.fillRect(0, 0, w, 58);
+  ctx.strokeStyle = "rgba(253, 224, 71, 0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 58.5); ctx.lineTo(w, 58.5); ctx.stroke();
+
+  // Trái: Đồng hồ, Tiền, Uy tín, Điểm
+  text("⏱ " + fmtTime(snap.time_left_ticks), 14, 26, { size: 19, color: "#ffd54f" });
+  text(`💰 ${snap.money ?? 0}k   ⭐ ${(snap.reputation ?? 0).toFixed(1)}   🏆 ${snap.score ?? 0}`, 110, 26, { size: 15, color: "#fff" });
+  const handName = snap.hand ? (typeof snap.hand === "string" ? snap.hand : (snap.hand.dish || snap.hand.dish_id || "")) : "";
+  text(handName ? "Tay đang cầm: 1 món (mang tới T1)" : "Tay: trống", 14, 48, { size: 12, color: handName ? "#69f0ae" : "#9fb3c0" });
+
+  // Phải: HUD Nguyên liệu (Kho khả dụng = kho thực - đang giữ chỗ)
+  const reservedMap = {};
+  (snap.customers || []).forEach((c) => {
+    const res = c.reserved || {};
+    Object.keys(res).forEach((k) => { reservedMap[k] = (reservedMap[k] || 0) + res[k]; });
+  });
+  const ING_LIST = [
+    { key: "ca_loc", label: "Cá lóc", icon: "🐟", col: "#8bc34a" },
+    { key: "ca_linh", label: "Cá linh", icon: "🐠", col: "#81d4fa" },
+    { key: "bong_dien_dien", label: "Điên điển", icon: "🌼", col: "#ffd54f" },
+    { key: "bong_sung", label: "Bông súng", icon: "🪷", col: "#f48fb1" },
+  ];
+  const pillW = 116, pillH = 38, gap = 8;
+  const startX = Math.max(360, w - (ING_LIST.length * (pillW + gap) + 8));
+  ING_LIST.forEach((ing, idx) => {
+    const px0 = startX + idx * (pillW + gap), py0 = 10;
+    const total = (snap.stock && snap.stock[ing.key]) || 0;
+    const rsv = reservedMap[ing.key] || 0;
+    const avail = Math.max(0, total - rsv);
+    ctx.fillStyle = avail > 0 ? "rgba(30, 48, 64, 0.92)" : "rgba(20, 30, 40, 0.65)";
+    ctx.strokeStyle = avail > 0 ? ing.col : "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(px0, py0, pillW, pillH, 8); ctx.fill(); ctx.stroke();
+    text(`${ing.icon} ${ing.label}`, px0 + 8, py0 + 15, { size: 11, color: avail > 0 ? "#e8eef2" : "#78909c" });
+    const countTxt = rsv > 0 ? `${avail} (giữ ${rsv})` : `×${avail}`;
+    text(countTxt, px0 + 8, py0 + 31, { size: 12, color: avail > 0 ? ing.col : "#607d8b" });
+  });
+
   text("WASD/mũi tên di chuyển · E tương tác (bếp / bàn) · R chơi lại", w - 10, h - 14, { size: 12, align: "right", color: "#9fb3c0" });
 }
 
