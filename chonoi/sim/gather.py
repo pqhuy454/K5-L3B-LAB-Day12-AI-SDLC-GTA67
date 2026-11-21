@@ -24,6 +24,7 @@ import math
 
 from ..ids import sort_by_id
 from ..inventory import hold_to_items
+from .gather_actions import try_catch, try_harvest
 from .ramp import ramp_velocity
 
 TICK = 60.0
@@ -117,11 +118,10 @@ class GatherSim:
             if self._in_dock():
                 self._finish("docked", events)
                 return events
-            # TODO(nhóm, lát 2): chỉ khi ở mặt nước: hái nút `ready` gần nhất trong interact_radius
-            #   (id nhỏ khi bằng nhau): gather / hold_full; đặt regrow_ticks cho nút.
+            try_harvest(self, events, TICK)
         # 4. bắt cá
         if inp.pressed("catch"):
-            pass  # TODO(nhóm, lát 2): chỉ khi catch_cd_ticks == 0 và dưới nước: fish_caught / hold_full.
+            try_catch(self, events, TICK)
         # 5. hết giờ
         if self.time_left_ticks <= 0:
             self._finish("time", events)
