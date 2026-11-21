@@ -392,7 +392,27 @@ def main(argv=None) -> int:
             raise BadInput("--inventory-out chỉ dùng với gather")
         tuning = load_contract()["tuning"]
         scenario = load_scenario(a.scenario, a.mode, tuning)
-        # Sáng tạo chỉ bật ở chế độ chơi live (tắt ở headless): mở thêm 2 bàn T2 (trái dưới) & T3 (trên phải)
+        # Sáng tạo chỉ bật ở chế độ chơi live (tắt ở headless):
+        # - Màn bơi: túi rộng hơn (24 chỗ) và nhiều đàn cá hơn (14 đàn)
+        # - Màn quán: mở thêm 2 bàn T2, T3, thu tiền thủ công tại bàn, tự kết thúc khi hết sạch đồ ăn
+        tuning["quan"]["manual_collect"] = True
+        tuning["quan"]["end_when_out_of_stock"] = True
+        if not a.scenario:
+            tuning["gather"]["hold_capacity"] = 24
+            extra_fish = [
+                {"id": "F7", "kind": "ca_linh", "pos": [10, 12], "heading_deg": 0},
+                {"id": "F8", "kind": "ca_loc", "pos": [22, 18], "heading_deg": 0},
+                {"id": "F9", "kind": "ca_linh", "pos": [35, 6], "heading_deg": 0},
+                {"id": "F10", "kind": "ca_loc", "pos": [48, 22], "heading_deg": 0},
+                {"id": "F11", "kind": "ca_linh", "pos": [55, 8], "heading_deg": 0},
+                {"id": "F12", "kind": "ca_loc", "pos": [68, 20], "heading_deg": 0},
+                {"id": "F13", "kind": "ca_linh", "pos": [82, 12], "heading_deg": 0},
+                {"id": "F14", "kind": "ca_loc", "pos": [94, 8], "heading_deg": 0},
+            ]
+            seen_fish = {f["id"] for f in tuning["gather"]["fish_initial"]}
+            for f in extra_fish:
+                if f["id"] not in seen_fish:
+                    tuning["gather"]["fish_initial"].append(f)
         if "tables" not in scenario:
             existing_ids = {tb["id"] for tb in tuning["quan"]["tables"]}
             for extra in ({"id": "T2", "pos": [2.2, 2.6]}, {"id": "T3", "pos": [13.2, 7.6]}):

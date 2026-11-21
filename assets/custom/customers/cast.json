@@ -29,6 +29,7 @@
     {
       "id": "anh_huan_va_anh_kha",
       "name": "Anh Huấn & Anh Khá",
+      "names": ["Anh Huấn", "Anh Khá"],
       "sprites": ["customers/anh_huan.svg", "customers/anh_kha.svg"],
       "audio_triggers": {
         "served": ["audio/anh-huan-cau.mp3", "audio/kha-banh.mp3"]

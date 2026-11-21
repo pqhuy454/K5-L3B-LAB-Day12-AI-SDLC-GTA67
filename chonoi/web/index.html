@@ -7,12 +7,115 @@
 <style>
   html, body { margin: 0; height: 100%; background: #10161c; color: #e8eef2; font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; }
+  #intro-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 35%, rgba(20, 48, 68, 0.88), rgba(8, 17, 26, 0.96));
+    backdrop-filter: blur(5px);
+  }
+  #intro-overlay.hidden { display: none; }
+  .intro-card {
+    width: min(520px, 92vw); padding: 28px 30px; border-radius: 18px;
+    background: linear-gradient(180deg, rgba(22, 39, 54, 0.96), rgba(14, 25, 36, 0.98));
+    border: 2px solid rgba(250, 204, 21, 0.45);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    text-align: center;
+  }
+  .intro-badge {
+    display: inline-block; padding: 3px 12px; border-radius: 999px;
+    background: rgba(250, 204, 21, 0.16); color: #fde047;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.8px; margin-bottom: 10px;
+  }
+  .intro-title {
+    margin: 0 0 6px; font-size: 30px; font-weight: 900; color: #fef08a;
+    text-shadow: 0 2px 12px rgba(245, 158, 11, 0.35);
+  }
+  .intro-sub { margin: 0 0 22px; color: #cbd5e1; font-size: 14px; }
+  .intro-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .intro-btn {
+    padding: 12px 28px; border-radius: 12px; font-size: 16px; font-weight: 800;
+    cursor: pointer; border: none; transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+  .intro-btn:hover { transform: translateY(-1px); opacity: 0.94; }
+  .intro-btn-play { background: linear-gradient(135deg, #f59e0b, #eab308); color: #1c1205; }
+  .intro-btn-about { background: rgba(255, 255, 255, 0.09); color: #f8fafc; border: 1.5px solid rgba(255, 255, 255, 0.25); }
+  .intro-about-box {
+    text-align: left; margin-top: 16px; padding: 14px 16px; border-radius: 12px;
+    background: rgba(8, 16, 24, 0.65); border: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 13px; line-height: 1.55; color: #e2e8f0; display: none;
+  }
+  .intro-about-box.open { display: block; }
+  .intro-about-box h3 { margin: 0 0 6px; color: #fde047; font-size: 14px; }
+  .intro-about-box ul { margin: 6px 0 0; padding-left: 18px; }
+  #btn-restart-all {
+    position: fixed; left: 12px; bottom: 10px; z-index: 30;
+    padding: 6px 14px; border-radius: 9px; font-size: 12px; font-weight: 700;
+    background: rgba(15, 23, 42, 0.85); color: #fde047;
+    border: 1.5px solid rgba(250, 204, 21, 0.5); cursor: pointer;
+  }
+  #btn-restart-all:hover { background: rgba(30, 41, 59, 0.95); }
+  #end-overlay {
+    position: fixed; inset: 0; z-index: 40;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(8, 17, 26, 0.72); backdrop-filter: blur(3px);
+  }
+  #end-overlay.open { display: flex; }
 </style>
 </head>
 <body>
+<button id="btn-restart-all" title="Chơi lại từ đầu">🔄 Chơi lại từ đầu</button>
+<div id="end-overlay">
+  <div class="intro-card" style="width:min(420px,90vw)">
+    <div class="intro-badge" id="end-badge">KẾT THÚC CA TỐI</div>
+    <h2 class="intro-title" id="end-title" style="font-size:24px">Hết nguyên liệu!</h2>
+    <p class="intro-sub" id="end-stats" style="margin-bottom:18px"></p>
+    <div class="intro-actions">
+      <button id="btn-end-restart" class="intro-btn intro-btn-play">🔄 Chơi lại từ đầu</button>
+    </div>
+  </div>
+</div>
+<div id="intro-overlay">
+  <div class="intro-card">
+    <div class="intro-badge">NHÓM GTA67 · AI SDLC</div>
+    <h1 class="intro-title">QUÁN ĂN CHỢ NỔI</h1>
+    <p class="intro-sub">Sáng Út Sen lặn bắt cá, hái bông miền Tây · Tối mở Quán Má Tư đón khách trên sông</p>
+    <div class="intro-actions">
+      <button id="btn-intro-play" class="intro-btn intro-btn-play">▶ Chơi</button>
+      <button id="btn-intro-about" class="intro-btn intro-btn-about">📖 Giới thiệu</button>
+    </div>
+    <div id="intro-about-box" class="intro-about-box">
+      <h3>Câu chuyện &amp; Luật chơi</h3>
+      <div>Má Tư đau lưng, Út Sen thay má lo trọn một ngày trên chợ nổi:</div>
+      <ul>
+        <li><b>Buổi sáng (Lặn &amp; Hái):</b> Dùng <b>WASD / Mũi tên</b> bơi, <b>E</b> hái bông ở mặt nước / cập bến, <b>Space</b> bắt cá dưới nước. Coi chừng hết oxy dưới nước sẽ ngạt và tụt Máu!</li>
+        <li><b>Buổi tối (Mở Quán):</b> Bấm <b>E</b> tại bếp <b>B1</b> để nấu và bưng món, bấm <b>E</b> tại bàn khách để phục vụ. Phục vụ lúc khách còn ≥ 50% kiên nhẫn sẽ nhận tiền boa &amp; +0,2 ⭐ uy tín.</li>
+        <li><b>Điểm số:</b> <code>Tiền kiếm được + 100 × floor(Uy tín)</code> · Bấm <b>R</b> để chơi lại.</li>
+      </ul>
+    </div>
+  </div>
+</div>
 <canvas id="c"></canvas>
 <script>
 "use strict";
+const introOverlay = document.getElementById("intro-overlay");
+const introAboutBox = document.getElementById("intro-about-box");
+document.getElementById("btn-intro-play").addEventListener("click", () => {
+  introOverlay.classList.add("hidden");
+  fetch("/restart", { method: "POST" }).catch(() => {});
+});
+document.getElementById("btn-intro-about").addEventListener("click", () => {
+  introAboutBox.classList.toggle("open");
+});
+const endOverlay = document.getElementById("end-overlay");
+const endTitle = document.getElementById("end-title");
+const endStats = document.getElementById("end-stats");
+function restartFromBeginning() {
+  endOverlay.classList.remove("open");
+  fetch("/new-day", { method: "POST" }).catch(() => {});
+  lastSent = ""; down.clear();
+}
+document.getElementById("btn-restart-all").addEventListener("click", restartFromBeginning);
+document.getElementById("btn-end-restart").addEventListener("click", restartFromBeginning);
 /*
  * Client chơi trực tiếp (starter). CHỈ ĐỌC snapshot từ GET /state và gửi phím qua POST /input.
  * Trường nào snapshot chưa có thì bỏ qua (nhóm viết luật tới đâu, hình hiện tới đó). Hình khối tạm, thay bằng đồ họa của nhóm.
@@ -202,29 +305,53 @@ function getCastSlot(customerId) {
 
 const audioQueue = [];
 let audioPlaying = false;
+const audioIdleWaiters = [];
 const playedEventKeys = new Set();
 let lastAudioTick = -1;
 const custWalkStart = {}; // customer_id -> tick bắt đầu bước vào từ LỐI VÀO (UI-only)
-const WALK_IN_TICKS = 90; // ~1.5 giây đi từ LỐI VÀO [5.6, 0.3] tới bàn T1
+const WALK_IN_TICKS = 90; // ~1.5 giây đi từ LỐI VÀO [5.6, 0.3] tới bàn
+const WALK_OUT_TICKS = 75; // ~1.25 giây đi từ bàn ra LỐI VÀO sau khi nói xong
+const custLastTablePos = {}; // customer_id -> [x, z] bàn gần nhất
+const departingVisuals = {}; // customer_id -> { slot, pos, speaking, walkOutStart }
 
-function enqueueAudio(paths) {
-  paths.forEach((p) => audioQueue.push("/assets/custom/" + p));
+function enqueueAudio(paths, onAllDone) {
+  paths.forEach((p, i) => audioQueue.push({ src: "/assets/custom/" + p, onDone: i === paths.length - 1 ? onAllDone : null }));
   playNextAudio();
 }
+function whenAudioIdle(fn) {
+  if (!audioPlaying && !audioQueue.length) { fn(); return; }
+  audioIdleWaiters.push(fn);
+}
 function playNextAudio() {
-  if (audioPlaying || !audioQueue.length) return;
+  if (audioPlaying) return;
+  if (!audioQueue.length) {
+    while (audioIdleWaiters.length) { try { audioIdleWaiters.shift()(); } catch (e) {} }
+    return;
+  }
   audioPlaying = true;
-  const a = new Audio(audioQueue.shift());
-  const done = () => { audioPlaying = false; playNextAudio(); };
+  const item = audioQueue.shift();
+  const a = new Audio(item.src);
+  const done = () => {
+    audioPlaying = false;
+    if (item.onDone) item.onDone();
+    playNextAudio();
+  };
   a.onended = done;
   a.onerror = done;
   a.play().catch(done);
+}
+function startWalkOut(cid) {
+  if (departingVisuals[cid]) {
+    departingVisuals[cid].speaking = false;
+    departingVisuals[cid].walkOutStart = snap ? snap.tick : 0;
+  }
 }
 function processCastAudio(events) {
   if (!events || !castData) return;
   if (snap && snap.tick < lastAudioTick) {
     playedEventKeys.clear();
     for (const k of Object.keys(custWalkStart)) delete custWalkStart[k];
+    for (const k of Object.keys(departingVisuals)) delete departingVisuals[k];
   }
   if (snap) lastAudioTick = snap.tick;
   for (const ev of events) {
@@ -235,7 +362,21 @@ function processCastAudio(events) {
     playedEventKeys.add(key);
     const slot = getCastSlot(cid);
     const clips = slot && slot.audio_triggers && slot.audio_triggers[ev.name];
-    if (clips && clips.length) enqueueAudio(clips);
+    if (ev.name === "paid" || ev.name === "customer_left") {
+      if (custLastTablePos[cid] && slot) {
+        // Mọi nhân vật đều ở lại nói xong thoại (nếu đang phát hoặc vừa kích hoạt) rồi mới bước ra khỏi quán
+        departingVisuals[cid] = { slot, pos: custLastTablePos[cid], speaking: true, walkOutStart: null };
+        if (clips && clips.length) {
+          enqueueAudio(clips, () => startWalkOut(cid));
+        } else {
+          whenAudioIdle(() => startWalkOut(cid));
+        }
+      } else if (clips && clips.length) {
+        enqueueAudio(clips);
+      }
+    } else if (clips && clips.length) {
+      enqueueAudio(clips);
+    }
   }
 }
 
@@ -994,9 +1135,10 @@ function drawQuan(w, h) {
     ctx.fillRect(sx(tb.pos[0]) - 0.8 * s, sy(tb.pos[1]) + 0.8 * s, 1.6 * s, 16);
     text(tb.id + (isNearby ? " [Bấm E]" : ""), sx(tb.pos[0]), sy(tb.pos[1]) + 0.8 * s + 12, { size: 11, align: "center", color: "#a5d6a7" });
 
-    // Khách hàng: bước từ LỐI VÀO [5.6, 0.3] đi vào ngồi bàn T1 (UI-only animation)
+    // Khách hàng: bước từ LỐI VÀO [5.6, 0.3] đi vào ngồi bàn (UI-only animation)
     const c = byTable[tb.id];
     if (c) {
+      custLastTablePos[c.id] = [tb.pos[0], tb.pos[1]];
       if (custWalkStart[c.id] === undefined) {
         // Nếu khách vừa mới vào trong lúc chơi (tick > 2) thì chạy animation bước vào; fixture có sẵn ở tick 0 thì ngồi luôn
         custWalkStart[c.id] = snap.tick > 2 ? snap.tick : -WALK_IN_TICKS;
@@ -1051,12 +1193,15 @@ function drawQuan(w, h) {
         slot.sprites.forEach((sp, i) => {
           const im = getImage("/assets/custom/" + sp);
           if (im.complete && im.naturalWidth > 0) {
-            const offsetX = slot.sprites.length === 2 ? (i === 0 ? -0.55 * s : 0.55 * s) : 0;
+            const offsetX = slot.sprites.length === 2 ? (i === 0 ? -0.62 * s : 0.62 * s) : 0;
             ctx.save();
             ctx.translate(cx + offsetX + shakeX, cy - cH * 0.28 + custBobY);
             if (walkTilt) ctx.rotate(walkTilt);
             ctx.drawImage(im, -cW / 2, -cH / 2, cW, cH);
             ctx.restore();
+            // Tách tên riêng từng nhân vật (vd: Anh Huấn bên trái, Anh Khá bên phải)
+            const charLabel = (slot.names && slot.names[i]) || slot.name;
+            text(charLabel, cx + offsetX, cy - 1.08 * s, { size: 11, align: "center", color: "#fde047" });
             drawnCust = true;
           }
         });
@@ -1071,23 +1216,32 @@ function drawQuan(w, h) {
         ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
         text(c.state === "eating" ? "😋" : "👤", cx, cy + 4, { size: 12, align: "center" });
       }
-      if (slot) {
-        text(slot.name, cx, cy - 1.12 * s, { size: 11, align: "center", color: "#fde047" });
-      }
 
-      // Chỉ hiện bong bóng món & thanh kiên nhẫn sau khi khách đã bước tới ngồi vào bàn
+      // Chỉ hiện bong bóng món / nút thu tiền & thanh kiên nhẫn sau khi khách đã bước tới ngồi vào bàn
       if (!isWalkingIn) {
         const bubbleY = cy - 1.75 * s;
-        const dishKey = c.dish_id || c.dish;
-        ctx.fillStyle = "rgba(15, 23, 42, 0.82)";
-        ctx.strokeStyle = "rgba(253, 224, 71, 0.7)";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(cx, bubbleY, 0.42 * s, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        if (RESTAURANT_ASSETS[dishKey]) {
-          drawSpriteFit(dishKey, cx, bubbleY, 0.62 * s);
+        if (c.state === "ready_to_pay") {
+          const bounce = Math.sin(snap.tick * 0.25) * 4;
+          ctx.fillStyle = "rgba(22, 163, 74, 0.94)";
+          ctx.strokeStyle = "#fef08a";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(cx - 0.95 * s, bubbleY - 0.28 * s + bounce, 1.9 * s, 0.52 * s, 10);
+          ctx.fill();
+          ctx.stroke();
+          text("💵 Thu tiền [E]", cx, bubbleY + 0.06 * s + bounce, { size: 12, align: "center", color: "#fef08a" });
+        } else {
+          const dishKey = c.dish_id || c.dish;
+          ctx.fillStyle = "rgba(15, 23, 42, 0.82)";
+          ctx.strokeStyle = "rgba(253, 224, 71, 0.7)";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(cx, bubbleY, 0.42 * s, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          if (RESTAURANT_ASSETS[dishKey]) {
+            drawSpriteFit(dishKey, cx, bubbleY, 0.62 * s);
+          }
         }
 
         if (c.patience_ticks_left !== undefined && c.state === "waiting") {
@@ -1097,6 +1251,46 @@ function drawQuan(w, h) {
       }
     }
   });
+
+  // 8b. Vẽ khách vừa thanh toán đang nói câu thoại cuối rồi bước ra khỏi quán (vd: Anh Trường)
+  for (const cid of Object.keys(departingVisuals)) {
+    const dep = departingVisuals[cid];
+    const seatX = dep.pos[0], seatZ = dep.pos[1] + 1.35;
+    let wx = seatX, wz = seatZ, bobY = 0, tilt = 0, alpha = 1;
+    if (dep.speaking) {
+      bobY = Math.sin(snap.tick * 0.25) * (0.04 * s);
+    } else {
+      const pOut = Math.max(0, Math.min(1, (snap.tick - dep.walkOutStart) / WALK_OUT_TICKS));
+      if (pOut >= 1) { delete departingVisuals[cid]; continue; }
+      if (pOut < 0.55) {
+        const u = pOut / 0.55;
+        wx = seatX + (5.6 - seatX) * u;
+        wz = seatZ;
+      } else {
+        const u = (pOut - 0.55) / 0.45;
+        wx = 5.6;
+        wz = seatZ + (0.3 - seatZ) * u;
+      }
+      bobY = -Math.abs(Math.sin(snap.tick * 0.35)) * (0.12 * s);
+      tilt = Math.sin(snap.tick * 0.35) * 0.1;
+      alpha = pOut > 0.85 ? (1 - pOut) / 0.15 : 1;
+    }
+    const dx = sx(wx), dy = sy(wz), cW = 1.25 * s, cH = 1.25 * s;
+    (dep.slot.sprites || []).forEach((sp, i) => {
+      const im = getImage("/assets/custom/" + sp);
+      if (im.complete && im.naturalWidth > 0) {
+        const off = dep.slot.sprites.length === 2 ? (i === 0 ? -0.62 * s : 0.62 * s) : 0;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(dx + off, dy - cH * 0.28 + bobY);
+        if (tilt) ctx.rotate(tilt);
+        ctx.drawImage(im, -cW / 2, -cH / 2, cW, cH);
+        ctx.restore();
+        const lbl = (dep.slot.names && dep.slot.names[i]) || dep.slot.name;
+        text(lbl + (dep.speaking ? " 💬💰" : ""), dx + off, dy - 1.08 * s, { size: 11, align: "center", color: "#fde047" });
+      }
+    });
+  }
 
   // 9. Người chơi (Út Sen)
   const p = snap.player;
@@ -1270,6 +1464,13 @@ function frame() {
   if (snap) {
     fx.ingest();
     if (snap.mode === "quan") { ctx.imageSmoothingEnabled = true; drawQuan(w, h); } else drawGather(w, h);
+    if (snap.finished && snap.mode === "quan" && !Object.keys(departingVisuals).length) {
+      endTitle.textContent = snap.reason === "out_of_stock" ? "Đã bán hết sạch đồ ăn!" : "Hết giờ ca tối!";
+      endStats.textContent = `💰 Tiền: ${snap.money ?? 0}k · ⭐ Uy tín: ${(snap.reputation ?? 0).toFixed(1)} · 🏆 Điểm: ${snap.score ?? 0}`;
+      endOverlay.classList.add("open");
+    } else {
+      endOverlay.classList.remove("open");
+    }
     fx.draw(w);
     eventLog(w, h);
     drawPressLog(w, h);

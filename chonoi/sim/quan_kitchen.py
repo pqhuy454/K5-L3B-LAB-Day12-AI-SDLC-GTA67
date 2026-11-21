@@ -119,10 +119,14 @@ def _pay_customer(sim, customer: dict, events: list) -> None:
 
 def tick_eating(sim, events: list) -> None:
     eating = sort_by_id([c for c in sim.customers if c.get("state") == "eating"])
+    manual = bool(sim.t.get("manual_collect", False))
     for c in eating:
         c["eat_ticks"] = max(0, c["eat_ticks"] - 1)
         if c["eat_ticks"] == 0:
-            _pay_customer(sim, c, events)
+            if manual:
+                c["state"] = "ready_to_pay"
+            else:
+                _pay_customer(sim, c, events)
 
 
 def interact(sim, target: tuple, events: list) -> None:
@@ -156,10 +160,13 @@ def _interact_stove(sim, stove: dict, events: list) -> None:
 
 
 def _interact_table(sim, table: dict, events: list) -> None:
-    if sim.hand is None:
-        return
     customer = orders.customer_at_table(sim, table["id"])
-    if customer is None or customer.get("state") != "waiting":
+    if customer is None:
+        return
+    if customer.get("state") == "ready_to_pay":
+        _pay_customer(sim, customer, events)
+        return
+    if sim.hand is None or customer.get("state") != "waiting":
         return
     dish = sim.hand["dish"]
     hand_cid = sim.hand.get("customer_id")
@@ -192,6 +199,6 @@ def discard_dish_for(sim, customer_id: str) -> None:
 
 
 def close_shift(sim, events: list) -> None:
-    eating = sort_by_id([c for c in sim.customers if c.get("state") == "eating"])
-    for c in eating:
+    payable = sort_by_id([c for c in sim.customers if c.get("state") in ("eating", "ready_to_pay")])
+    for c in payable:
         _pay_customer(sim, c, events)

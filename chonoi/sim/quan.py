@@ -184,7 +184,26 @@ class QuanSim:
                         "dish_id": chosen,
                     }))
 
-        # 6. Hết giờ / Đóng ca: khách đang ăn trả tiền ngay (Lát 4), khách đang chờ rời không phạt (Lát 3)
+        # 6. Hết đồ ăn (chỉ bật ở live qua end_when_out_of_stock) hoặc Hết giờ / Đóng ca
+        if (self.t.get("end_when_out_of_stock", False) and not self.customers
+                and self.hand is None and all(s["state"] == "idle" for s in self.stoves)):
+            avail = self.available_stock()
+            can_cook_any = any(
+                all(avail.get(item, 0) >= qty for item, qty in d["recipe"].items())
+                for d in self.menu.values()
+            )
+            if not can_cook_any:
+                self.done = True
+                self.reason = "out_of_stock"
+                events.append(("quan_end", {
+                    "reason": "out_of_stock",
+                    "money": self.money,
+                    "earned": self.earned,
+                    "shift_earned": self.shift_earned,
+                    "reputation": self.reputation,
+                }))
+                return events
+
         if self.time_left_ticks <= 0:
             self.done = True
             self.reason = "time"
