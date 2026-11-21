@@ -29,6 +29,20 @@ from .runner import Session
 from .scenario import load_scenario
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+ASSET_DIR = os.path.join(os.path.dirname(WEB_DIR), "..", "assets")
+# Chỉ phục vụ những sprite giao diện dùng; không mở quyền đọc tùy ý từ thư mục dự án.
+SPRITE_FILES = {
+    "diver.png": ("SpearFishing Assets Pack", "Sprites", "Diver-32x32", "Diver 1.png"),
+    "fish-linh.png": ("SpearFishing Assets Pack", "Sprites", "Fish1 - 16x16", "Orange.png"),
+    "fish-loc.png": ("SpearFishing Assets Pack", "Sprites", "Fish2 - 32x16", "Blue.png"),
+    "seaweed.png": ("SpearFishing Assets Pack", "Sprites", "SeaWeed - 16x32", "Medium.png"),
+    "coral.png": ("SpearFishing Assets Pack", "Sprites", "Corals - 16x16", "Corals.png"),
+    "sand.png": ("SpearFishing Assets Pack", "Sprites", "Tiles - 16x16", "Sand.png"),
+    "bubble.png": ("SpearFishing Assets Pack", "Sprites", "Bubble - 8x8.png"),
+    "table.png": ("Restaurant Assets Pack", "Tiles", "RestaurantFixtures", "fooddrink_restaurant_fixtures_table_dining_round_four_01.png"),
+    "stove.png": ("Restaurant Assets Pack", "Tiles", "RestaurantFixtures", "fooddrink_restaurant_fixtures_stove_commercial_six_burner_01.png"),
+    "lights.png": ("Restaurant Assets Pack", "Tiles", "CafeProps", "fooddrink_cafe_props_string_lights_warm_segment_01.png"),
+}
 TICK_S = 1.0 / 60.0
 MAX_BODY = 4096
 RECENT_EVENTS = 40
@@ -154,6 +168,13 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError:
                 self._send(404, b'{"error":"thieu index.html"}')
+        elif path.startswith("/assets/") and path[len("/assets/"):] in SPRITE_FILES:
+            name = path[len("/assets/"):]
+            try:
+                with open(os.path.join(ASSET_DIR, *SPRITE_FILES[name]), "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            except OSError:
+                self._send(404, b'{"error":"thieu sprite"}')
         else:
             self._send(404, b'{"error":"khong co"}')
 
