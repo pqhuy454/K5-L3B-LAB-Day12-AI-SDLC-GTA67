@@ -3,16 +3,11 @@
 Mặt cắt dòng sông nhìn NGANG: vị trí `[x, d]` (x sang phải, `d` độ sâu hướng xuống, d = 0 là mặt nước).
 `move = [x, d]`: thành phần thứ hai DƯƠNG = bơi xuống. Hướng mặt là góc từ +x, dương = xuống.
 
-Đã làm sẵn để smoke test chạy được: bơi + tăng/giảm tốc, chặn mép (d không âm), đồng hồ và hết giờ,
-cập bến (`interact` trong vùng bến -> `gather_end` reason `docked`), xuất kho, snapshot đầy đủ trường gather.
+Đã có: bơi + tăng/giảm tốc, chặn mép (d không âm), oxy, ngạt, ngất, sức chứa giỏ,
+đồng hồ và hết giờ, cập bến (`interact` trong vùng bến -> `gather_end` reason `docked`),
+xuất kho, snapshot đầy đủ trường gather.
 
 Nhóm viết tiếp (đúng thứ tự một bước trong PRD mục 13.8, "Gather"):
-  TODO(nhóm, lát 1): bơi + oxy + biên + giỏ
-      - oxy: dưới nước (d > surface_depth) trừ 1 tick/tick, mặt nước hồi oxygen_refill_per_tick, kẹp [0, max]
-      - ngạt: oxy = 0 và đang dưới nước -> đếm zero_oxy_ticks, đủ choke_interval_ticks thì -1 Máu (choke)
-      - Máu về 0 -> ngất (faint, gather_end reason `fainted`, mất toàn bộ giỏ, kho rỗng)
-      - sự kiện dive / surface / oxygen_empty / choke / faint
-      - giỏ: thứ tự nhặt (LIFO), sức chứa hold_capacity
   TODO(nhóm, lát 2): hái + bắt cá + cập bến + kho
       - hái nút ở mặt nước (gather, hold_full), nút mọc lại (node_regrown đã có phần đếm ngược)
       - bắt đàn cá bằng `catch` (fish_caught, hold_full, hồi chiêu catch_cd_ticks, chỉ khi dưới nước)
@@ -25,6 +20,8 @@ import math
 from ..ids import sort_by_id
 from ..inventory import hold_to_items
 from . import gather_harvest as harvest, gather_survival as survival
+from . import gather_survival, hold
+from .gather_actions import try_catch, try_harvest
 from .ramp import ramp_velocity
 
 TICK = 60.0
@@ -80,6 +77,12 @@ class GatherSim:
     def inventory_items(self) -> dict:
         return hold_to_items(self.hold)
 
+    def add_to_hold(self, kind: str, count: int = 1) -> bool:
+        """Thêm nguyên một lượt nhặt; không thêm một phần nếu giỏ thiếu chỗ."""
+        if count < 1:
+            return False
+        return hold.push_all(self, [kind] * count)
+
     def snapshot(self) -> dict:
         return {
             "player": {"pos": self.pos, "vel": self.vel, "heading_deg": self.heading,
@@ -106,23 +109,23 @@ class GatherSim:
                 n["regrow_ticks"] -= 1
                 if n["regrow_ticks"] == 0:
                     events.append(("node_regrown", {"node_id": n["id"]}))
-
-    def step(self, inp):
-        events = []
-        self._tick_timers(events)
-        was_surface = self._at_surface()
+        # 2. bơi + chặn mép; trạng thái oxy tính theo vị trí CUỐI bước
+        was_at_surface = self._at_surface()
         self._move(inp)
-        survival.zone_change(self, was_surface, events)
-        if survival.update_oxygen(self, events):
+        gather_survival.zone_change(self, was_at_surface, events)
+        if gather_survival.update_oxygen(self, events):
             self._finish("fainted", events)
             return events
+        # 3. interact: bến trước, rồi hái
         if inp.pressed("interact"):
             if self._in_dock():
                 self._finish("docked", events)
                 return events
-            harvest.try_gather(self, events)
+            try_harvest(self, events, TICK)
+        # 4. bắt cá
         if inp.pressed("catch"):
-            harvest.try_catch(self, events)
+            try_catch(self, events, TICK)
+        # 5. hết giờ
         if self.time_left_ticks <= 0:
             self._finish("time", events)
         return events
