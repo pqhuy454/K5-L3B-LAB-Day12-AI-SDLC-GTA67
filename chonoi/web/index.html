@@ -16,7 +16,9 @@
 /*
  * Client chơi trực tiếp (starter). CHỈ ĐỌC snapshot từ GET /state và gửi phím qua POST /input.
  * Trường nào snapshot chưa có thì bỏ qua (nhóm viết luật tới đâu, hình hiện tới đó). Hình khối tạm, thay bằng đồ họa của nhóm.
- * Phím: WASD / mũi tên = di chuyển · E = interact · Space = catch · R = chơi lại.
+ * Phím: WASD / mũi tên = di chuyển · E = interact · Space = catch · R = chơi lại buổi này
+ *       Enter = hết buổi sáng thì chèo xuồng về quán (cảnh chuyển, Enter lần nữa để bỏ qua) · N = ngày mới.
+ * Mọi hiệu ứng (sóng, bọt, cá bơi lượn, cảnh chuyển) chỉ ở client, không đi vào mô phỏng / headless.
  */
 const cv = document.getElementById("c");
 const ctx = cv.getContext("2d");
@@ -52,17 +54,28 @@ async function flush() {
   inflight = false;
 }
 function keyName(e) { return e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase(); }
+let showPressLog = true;
 addEventListener("keydown", (e) => {
   const k = keyName(e);
   if (e.repeat) { if (k === " " || k.startsWith("arrow")) e.preventDefault(); return; }
+  console.debug("[phím] xuống", k, "tick", snap && snap.tick, "mode", snap && snap.mode);
+  if (k === "l") { showPressLog = !showPressLog; return; }
+  if (k === "enter") {
+    if (cut) cut.skip = true;
+    else if (snap && snap.can_continue) startCutscene();
+    return;
+  }
+  if (cut) return;                                   // đang chiếu cảnh chuyển: khóa điều khiển
   if (MOVE_KEYS[k]) { down.add(MOVE_KEYS[k]); e.preventDefault(); }
   else if (k === "e") down.add("interact");
   else if (k === " ") { down.add("catch"); e.preventDefault(); }
-  else if (k === "r") { fetch("/restart", { method: "POST" }); lastSent = ""; down.clear(); }
+  else if (k === "r") { fetch("/restart", { method: "POST" }); lastSent = ""; down.clear(); fx.reset(); }
+  else if (k === "n") { fetch("/new-day", { method: "POST" }); lastSent = ""; down.clear(); fx.reset(); fadeIn = 1; }
   pushInput();
 });
 addEventListener("keyup", (e) => {
   const k = keyName(e);
+  if (k === "e" || k === " ") console.debug("[phím] nhả", k, "tick", snap && snap.tick);
   if (MOVE_KEYS[k]) down.delete(MOVE_KEYS[k]);
   else if (k === "e") down.delete("interact");
   else if (k === " ") down.delete("catch");
@@ -168,7 +181,7 @@ function drawPixelCharacter(charIndex, dirRow, frameCol, destX, destY, destW, de
   return false;
 }
 
-function drawDiver(p, px, py, s) {
+function drawDiver(p, px, py, s, size = 1.05 * s) {
   let spriteKey = "diver_idle";
   let numFrames = 6;
   const speed = p.vel ? Math.hypot(p.vel[0], p.vel[1]) : 0;
@@ -207,7 +220,7 @@ function drawDiver(p, px, py, s) {
   const rotRad = facingLeft ? ((180 - heading) * Math.PI) / 180 : (heading * Math.PI) / 180;
   ctx.rotate(rotRad * 0.4);
 
-  const dw = 1.05 * s, dh = 1.05 * s;
+  const dw = size, dh = size;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(img, sx, 0, frameW, frameH, -dw / 2, -dh / 2, dw, dh);
   ctx.imageSmoothingEnabled = true;
@@ -246,109 +259,570 @@ function eventLog(w, h) {
   const ev = (snap.events || []).slice(-6);
   ev.forEach((e, i) => text(`t${e.tick} ${e.name} ${brief(e.data)}`, w - 10, h - 70 - (ev.length - 1 - i) * 15, { size: 11, align: "right", color: "rgba(232,238,242,.75)" }));
 }
-function overlay(w, h) {
-  if (offline) text("Mất kết nối tới máy chủ (đã tắt chưa?)", w / 2, 30, { align: "center", color: "#ff8a80", size: 16 });
-  if (snap.error) text("Luật của nhóm báo lỗi — xem terminal. R để chơi lại.", w / 2, 52, { align: "center", color: "#ff8a80", size: 15 });
-  if (snap.finished) {
-    ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(w / 2 - 190, h / 2 - 50, 380, 100);
-    text("Buổi " + (snap.mode === "gather" ? "sáng" : "tối") + " kết thúc: " + (snap.reason || ""), w / 2, h / 2 - 12, { align: "center", size: 20 });
-    text("Nhấn R để chơi lại", w / 2, h / 2 + 20, { align: "center", color: "#cfd8dc" });
+
+// ===================== CẢNH SÁNG: LẶN & HÁI =====================
+// Đồ họa sông: "Underwater Diving" của Luis Zuno @ansimuz (public domain) — assets/Nền sông và nhân vật/.
+// Cá linh: SpearFishing Assets Pack (Fish3 Grey). Mọi chuyển động trang trí dùng đồng hồ client, KHÔNG vào mô phỏng.
+const RIVER_DIR = "/assets/Nền sông và nhân vật/PNG/";
+const SF_DIR = "/assets/SpearFishing Assets Pack/Sprites/";
+const RIVER_ASSETS = {
+  bg: RIVER_DIR + "environment/background.png",
+  mid: RIVER_DIR + "environment/midground.png",
+  props: RIVER_DIR + "environment/props.png",
+  tiles: RIVER_DIR + "environment/tiles.png",
+  bubbles: RIVER_DIR + "FX/bubbles.png",
+  fishLoc: RIVER_DIR + "enemies/fish-big.png",
+  fishLinh: SF_DIR + "Fish3 - 32x16/Grey.png",
+};
+// Vùng cắt trong atlas (đo theo kênh alpha của ảnh gốc).
+const PROP = { bush: [434, 332, 46, 51], coral: [514, 327, 48, 56], weed: [614, 317, 52, 67],
+               rock: [49, 95, 85, 98], rock2: [33, 334, 85, 98] };
+const FLOOR_TILE = [16, 108, 176, 68];
+const MID_CROP = [0, 300, 960, 212];
+const DISH_NAME = { ca_loc_nuong_trui: "cá lóc nướng trui", goi_bong_sung: "gỏi bông súng", lau_ca_linh_dien_dien: "lẩu cá linh điên điển" };
+const REASON_VI = { docked: "Cập bến an toàn", time: "Hết giờ", fainted: "Ngất xỉu", error: "Lỗi luật", tick_limit: "Dừng" };
+let playerScreen = null;   // vị trí màn hình của người chơi (để thông báo nổi bám theo)
+
+function ready(src) { const im = getImage(src); return im.complete && im.naturalWidth > 0 ? im : null; }
+function blit(src, r, dx, dy, dw, dh) {
+  const im = ready(src);
+  if (!im) return false;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(im, r[0], r[1], r[2], r[3], dx, dy, dw, dh);
+  return true;
+}
+function hashId(id) { let v = 0; for (const ch of String(id)) v = (v * 31 + ch.charCodeAt(0)) >>> 0; return v; }
+const lerp = (a, b, k) => a + (b - a) * k;
+const easeOut = (k) => 1 - (1 - k) * (1 - k);
+function mixColor(c1, c2, k) {
+  const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+  const ch = (sh) => Math.round(lerp((a >> sh) & 255, (b >> sh) & 255, k));
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+function countItems(list) { const c = {}; (list || []).forEach((k) => (c[k] = (c[k] || 0) + 1)); return c; }
+function itemsText(list) {
+  const c = countItems(list), ks = Object.keys(c);
+  return ks.length ? ks.map((k) => (KIND_NAME[k] || k) + " ×" + c[k]).join(", ") : "(giỏ trống)";
+}
+
+// ---------- hình nhỏ dùng chung ----------
+function drawLotus(x, y, r) {
+  ctx.save(); ctx.translate(x, y);
+  for (let i = 0; i < 6; i++) {
+    ctx.save(); ctx.rotate((i - 2.5) * 0.42);
+    ctx.fillStyle = i % 2 ? "#f6b3cb" : "#e8799c";
+    ctx.beginPath(); ctx.ellipse(0, -r * 0.55, r * 0.28, r * 0.6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.fillStyle = "#ffd86b"; ctx.beginPath(); ctx.arc(0, -r * 0.12, r * 0.18, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawSesbania(x, y, r) {
+  for (const [a, b] of [[0, 0], [-0.7, 0.35], [0.7, 0.3], [-0.3, -0.6], [0.4, -0.55]]) {
+    ctx.fillStyle = "#f2c230"; ctx.beginPath(); ctx.ellipse(x + a * r, y + b * r, r * 0.38, r * 0.25, 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#d98e14"; ctx.beginPath(); ctx.arc(x + a * r + r * 0.12, y + b * r, r * 0.11, 0, Math.PI * 2); ctx.fill();
+  }
+}
+function drawItemIcon(kind, x, y, sz) {   // (x, y) là tâm
+  if (kind === "ca_loc" && blit(RIVER_ASSETS.fishLoc, [0, 0, 54, 49], x - sz / 2, y - sz * 0.45, sz, sz * 0.9)) return;
+  if (kind === "ca_linh" && blit(RIVER_ASSETS.fishLinh, [0, 0, 32, 16], x - sz / 2, y - sz / 4, sz, sz / 2)) return;
+  if (kind === "bong_sung") { drawLotus(x, y + sz * 0.15, sz * 0.45); return; }
+  if (kind === "bong_dien_dien") { drawSesbania(x, y, sz * 0.38); return; }
+  ctx.fillStyle = kc(kind); ctx.beginPath(); ctx.arc(x, y, sz * 0.35, 0, Math.PI * 2); ctx.fill();
+}
+function drawNipa(x, y, sc, col) {   // bụi dừa nước
+  ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, sc * 0.16); ctx.lineCap = "round";
+  for (let k = -3; k <= 3; k++) {
+    const a = -Math.PI / 2 + k * 0.33;
+    ctx.beginPath(); ctx.moveTo(x, y + sc * 0.6);
+    ctx.quadraticCurveTo(x + Math.cos(a) * sc * 1.2, y + Math.sin(a) * sc * 1.5,
+                         x + Math.cos(a) * sc * 2.1, y + Math.sin(a) * sc * 1.1 + sc * 0.8);
+    ctx.stroke();
+  }
+  ctx.lineCap = "butt";
+}
+function drawStiltHouse(x, waterY, s, lit) {   // nhà sàn ven sông
+  const wd = 4.2 * s, hh = 1.9 * s, lift = 1.0 * s;
+  ctx.fillStyle = "#4f3d30";
+  for (const f of [0.08, 0.46, 0.86]) ctx.fillRect(x + wd * f, waterY - lift, Math.max(2, 0.16 * s), lift + 0.3 * s);
+  ctx.fillStyle = "#8a6a4d"; ctx.fillRect(x, waterY - lift - hh, wd, hh);
+  ctx.fillStyle = "#6e4f37"; ctx.fillRect(x - 0.2 * s, waterY - lift - 0.25 * s, wd + 0.4 * s, 0.25 * s);
+  ctx.fillStyle = "#9a5b3c";
+  ctx.beginPath(); ctx.moveTo(x - 0.6 * s, waterY - lift - hh); ctx.lineTo(x + wd / 2, waterY - lift - hh - 1.3 * s);
+  ctx.lineTo(x + wd + 0.6 * s, waterY - lift - hh); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#3b2a1e"; ctx.fillRect(x + wd * 0.36, waterY - lift - hh * 0.78, wd * 0.22, hh * 0.5);
+  if (lit > 0) { ctx.fillStyle = `rgba(255,200,110,${lit})`; ctx.fillRect(x + wd * 0.36, waterY - lift - hh * 0.78, wd * 0.22, hh * 0.5); }
+}
+function drawBoat(cx, waterY, len) {   // xuồng ba lá: thon dài, mũi và lái cong lên
+  const h = len * 0.075, L = len / 2;
+  ctx.fillStyle = "#3f2a1c";
+  ctx.beginPath();
+  ctx.moveTo(cx - L, waterY - h * 2.0);                                    // lái
+  ctx.quadraticCurveTo(cx - L * 0.8, waterY + h * 0.9, cx - L * 0.45, waterY + h * 0.9);
+  ctx.lineTo(cx + L * 0.45, waterY + h * 0.9);
+  ctx.quadraticCurveTo(cx + L * 0.8, waterY + h * 0.9, cx + L, waterY - h * 2.0);   // mũi
+  ctx.lineTo(cx + L * 0.86, waterY - h * 0.8); ctx.lineTo(cx - L * 0.86, waterY - h * 0.8); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#a8743f"; ctx.lineWidth = Math.max(1, h * 0.4);
+  ctx.beginPath(); ctx.moveTo(cx - L * 0.9, waterY - h * 1.0); ctx.lineTo(cx + L * 0.9, waterY - h * 1.0); ctx.stroke();
+  ctx.fillStyle = "rgba(255,240,210,.18)"; ctx.fillRect(cx - L * 0.7, waterY + h * 1.1, L * 1.4, 2);   // vệt nước
+}
+
+// ---------- các lớp của cảnh sáng ----------
+function drawRiverSky(w, top, oy, s, sx, t) {
+  const sky = ctx.createLinearGradient(0, top, 0, oy);
+  sky.addColorStop(0, "#efae7b"); sky.addColorStop(0.6, "#f7d6a6"); sky.addColorStop(1, "#fbe9c8");
+  ctx.fillStyle = sky; ctx.fillRect(0, top, w, oy - top);
+  const sunX = sx(80), sunY = oy - (oy - top) * 0.58;
+  const glow = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, (oy - top) * 1.1);
+  glow.addColorStop(0, "rgba(255,236,170,.9)"); glow.addColorStop(1, "rgba(255,236,170,0)");
+  ctx.fillStyle = glow; ctx.fillRect(0, top, w, oy - top);
+  ctx.fillStyle = "#fff1c1"; ctx.beginPath(); ctx.arc(sunX, sunY, Math.max(8, 1.5 * s), 0, Math.PI * 2); ctx.fill();
+  const bank = oy - 0.1 * s;
+  ctx.fillStyle = "rgba(84,104,74,.6)"; ctx.fillRect(0, bank - 0.8 * s, w, 0.9 * s);
+  for (let i = 0; i * 3 * s < w + 6 * s; i++) drawNipa(i * 3.1 * s + (i % 3) * 0.7 * s, bank - 0.9 * s, s * (0.8 + (i % 4) * 0.12), "rgba(60,86,56,.85)");
+  for (const hx of [15, 34, 49, 70, 92]) drawStiltHouse(sx(hx), bank, s, 0);
+}
+
+let midCache = null;
+function midLayer(mh) {   // tầng đá giữa, mép trên mờ dần (tránh đường cắt ngang cứng); cache theo kích thước
+  mh = Math.round(mh);
+  if (midCache && midCache.height === mh) return midCache;
+  const im = ready(RIVER_ASSETS.mid);
+  if (!im) return null;
+  const c = document.createElement("canvas"), g2 = c.getContext("2d");
+  c.height = mh; c.width = Math.round(MID_CROP[2] * mh / MID_CROP[3]);
+  g2.imageSmoothingEnabled = false;
+  g2.drawImage(im, MID_CROP[0], MID_CROP[1], MID_CROP[2], MID_CROP[3], 0, 0, c.width, c.height);
+  const fade = g2.createLinearGradient(0, 0, 0, mh * 0.45);
+  fade.addColorStop(0, "rgba(0,0,0,0)"); fade.addColorStop(1, "rgba(0,0,0,1)");
+  g2.globalCompositeOperation = "destination-in"; g2.fillStyle = fade; g2.fillRect(0, 0, c.width, c.height);
+  midCache = c;
+  return c;
+}
+function drawUnderwater(w, oy, floorY, bottomY, s, sx, sy, D, camX, t) {
+  const riverH = bottomY - oy;
+  ctx.save(); ctx.beginPath(); ctx.rect(0, oy, w, riverH); ctx.clip();
+  const bg = ready(RIVER_ASSETS.bg);
+  if (bg) {
+    const k = riverH / 256, tw = 288 * k, off = -((((camX * 80 + t * 6) % tw) + tw) % tw);
+    ctx.imageSmoothingEnabled = false;
+    for (let x = off - tw; x < w + tw; x += tw) ctx.drawImage(bg, x, oy, tw + 1, riverH);
+  } else { ctx.fillStyle = "#24506a"; ctx.fillRect(0, oy, w, riverH); }
+  // nước phù sa: đục màu đất gần mặt, xanh thẫm ở đáy
+  const g = ctx.createLinearGradient(0, oy, 0, bottomY);
+  g.addColorStop(0, "rgba(150,118,62,.62)"); g.addColorStop(0.35, "rgba(96,102,62,.42)"); g.addColorStop(1, "rgba(6,22,30,.55)");
+  ctx.fillStyle = g; ctx.fillRect(0, oy, w, riverH);
+  // tia nắng xiên xuống
+  for (let i = 0; i < 6; i++) {
+    const x = sx(6 + i * 17 + Math.sin(t * 0.25 + i * 1.7) * 3), yEnd = sy(D * 0.75);
+    const a = 0.07 + 0.04 * Math.sin(t * 0.6 + i);
+    const rg = ctx.createLinearGradient(0, oy, 0, yEnd);
+    rg.addColorStop(0, `rgba(255,236,190,${a})`); rg.addColorStop(1, "rgba(255,236,190,0)");
+    ctx.fillStyle = rg; ctx.beginPath();
+    ctx.moveTo(x - 0.8 * s, oy); ctx.lineTo(x + 0.8 * s, oy); ctx.lineTo(x + 4.5 * s, yEnd); ctx.lineTo(x + 1.5 * s, yEnd);
+    ctx.closePath(); ctx.fill();
+  }
+  // đá tầng giữa, trôi nhẹ theo người chơi
+  const mid = midLayer(9 * s);
+  if (mid) {
+    const mh = mid.height, mw = mid.width, off = -((((camX * 160) % mw) + mw) % mw);
+    ctx.globalAlpha = 0.85;
+    for (let x = off - mw; x < w + mw; x += mw) ctx.drawImage(mid, Math.floor(x), floorY - mh + 1.5 * s);
+    ctx.globalAlpha = 1;
+  }
+  // đáy sông
+  ctx.fillStyle = "#0f1d1a"; ctx.fillRect(0, floorY + 1.2 * s, w, bottomY - floorY);
+  const fh = 2.6 * s, fw = FLOOR_TILE[2] * fh / FLOOR_TILE[3];
+  for (let x = (sx(0) % fw) - fw; x < w; x += fw) blit(RIVER_ASSETS.tiles, FLOOR_TILE, Math.floor(x), floorY - 1.0 * s, Math.ceil(fw) + 1, fh);
+  // rong, san hô, đá (rong lay theo dòng nước)
+  const DECOR = [["weed", 6], ["bush", 13], ["coral", 22], ["rock", 31], ["weed", 41], ["coral", 50],
+                 ["bush", 57], ["rock2", 68], ["weed", 76], ["coral", 85], ["bush", 93]];
+  for (const [kd, x] of DECOR) {
+    const r = PROP[kd], big = kd.startsWith("rock"), ph = (big ? 4.2 : 2.6) * s, pw = r[2] * ph / r[3];
+    ctx.save(); ctx.translate(sx(x), floorY - 0.1 * s);
+    if (!big) ctx.transform(1, 0, Math.sin(t * 1.2 + x) * 0.12, 1, 0, 0);
+    blit(RIVER_ASSETS.props, r, -pw / 2, -ph, pw, ph);
+    ctx.restore();
+  }
+  // bọt khí nổi lên từ đáy
+  for (const [bx, p0] of [[9, 0], [27, 1.3], [44, 2.1], [63, 0.6], [81, 2.7], [97, 1.9]]) {
+    const k = ((t + p0 * 1.7) % 5) / 5;
+    const y = lerp(floorY - 1 * s, oy + 0.6 * s, k), x = sx(bx) + Math.sin(t * 2 + bx) * 0.4 * s;
+    const fr = k < 0.85 ? 0 : Math.min(3, Math.floor(((k - 0.85) / 0.15) * 4));
+    blit(RIVER_ASSETS.bubbles, [fr * 23, 0, 23, 40], x - 0.6 * s, y - 1.0 * s, 1.2 * s, 2.1 * s);
+  }
+  // vạch độ sâu
+  for (let d = 5; d <= D; d += 5) text(d + " m", sx(0) + 4, sy(d) - 2, { size: 10, color: "rgba(255,255,255,.35)" });
+  ctx.restore();
+}
+
+function drawSurfaceLine(w, oy, s, t) {
+  for (const [dy, a, lw] of [[0, 0.85, 2], [0.35, 0.25, 1]]) {
+    ctx.strokeStyle = `rgba(255,240,210,${a})`; ctx.lineWidth = lw; ctx.beginPath();
+    for (let x = 0; x <= w + 6; x += 6) {
+      const y = oy + dy * s + Math.sin(x * 0.045 + t * 2.2) * 0.12 * s + Math.sin(x * 0.013 - t) * 0.08 * s;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
   }
 }
 
-// ----- cảnh GATHER: nhìn ngang, x sang phải, d xuống -----
+function drawDock(meta, s, sx, sy, t) {
+  const dp = meta.dock_pos || [2, 0], dr = meta.dock_radius || 3;
+  const deck = sy(-0.9), x0 = sx(dp[0] - 2.2), x1 = sx(dp[0] + 1.6);
+  ctx.fillStyle = "#4a3324";
+  for (let x = dp[0] - 2; x <= dp[0] + 1.7; x += 1.2) ctx.fillRect(sx(x), deck, Math.max(2, 0.28 * s), 4 * s);
+  ctx.fillStyle = "#8d6e4b"; ctx.fillRect(x0, deck - 0.3 * s, x1 - x0, 0.45 * s);
+  ctx.fillStyle = "#6e5238"; for (let x = x0; x < x1; x += 0.7 * s) ctx.fillRect(x, deck - 0.3 * s, 1, 0.45 * s);
+  drawBoat(sx(dp[0] + 3.2), sy(0) + Math.sin(t * 1.6) * 0.08 * s, 4.2 * s);
+  ctx.strokeStyle = "rgba(255,230,150,.55)"; ctx.setLineDash([5, 4]);
+  ctx.beginPath(); ctx.arc(sx(dp[0]), sy(dp[1]), dr * s, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  text("Bến", sx(dp[0]) - 0.3 * s, deck - 0.6 * s, { size: 12, align: "center", color: "#4a2e1a" });
+}
+
+function drawNodes(meta, s, sx, sy, t) {
+  const regrowMax = (meta.regrow_s || 20) * 60;
+  (snap.nodes || []).forEach((n) => {
+    const x = sx(n.pos[0]), y = sy(n.pos[1]) + Math.sin(t * 1.5 + n.pos[0]) * 0.05 * s;
+    const isReady = n.ready !== false;
+    ctx.strokeStyle = "rgba(70,110,60,.8)"; ctx.lineWidth = Math.max(1.5, 0.12 * s);   // thân dưới nước
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.bezierCurveTo(x + 0.4 * s, y + 1.5 * s, x - 0.4 * s, y + 3 * s, x, y + 4.5 * s); ctx.stroke();
+    if (n.kind === "bong_sung") {
+      ctx.fillStyle = "#4f8a3c"; ctx.beginPath(); ctx.moveTo(x - 0.6 * s, y);
+      ctx.ellipse(x - 0.6 * s, y, 1.1 * s, 0.28 * s, 0, 0.25, Math.PI * 2 - 0.25); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#3e7330"; ctx.beginPath(); ctx.ellipse(x + 0.8 * s, y + 0.05 * s, 0.8 * s, 0.22 * s, 0, 0, Math.PI * 2); ctx.fill();
+      if (isReady) drawLotus(x, y - 0.15 * s, 1.0 * s);
+      else { ctx.fillStyle = "#c7708f"; ctx.beginPath(); ctx.ellipse(x, y - 0.35 * s, 0.15 * s, 0.3 * s, 0, 0, Math.PI * 2); ctx.fill(); }
+    } else {   // điên điển: thân mảnh nhô khỏi mặt nước, chùm hoa vàng
+      ctx.strokeStyle = "#5d7a3a"; ctx.lineWidth = Math.max(1.5, 0.14 * s); ctx.beginPath();
+      ctx.moveTo(x, y); ctx.lineTo(x, y - 2.0 * s);
+      ctx.moveTo(x, y - 1.2 * s); ctx.lineTo(x + 0.7 * s, y - 1.9 * s);
+      ctx.moveTo(x, y - 0.9 * s); ctx.lineTo(x - 0.7 * s, y - 1.6 * s); ctx.stroke();
+      ctx.fillStyle = "#6f9a45";
+      for (const [a, b] of [[0.7, -1.9], [-0.7, -1.6], [0, -2.0]]) {
+        ctx.beginPath(); ctx.ellipse(x + a * s, y + b * s, 0.45 * s, 0.18 * s, a * 0.6, 0, Math.PI * 2); ctx.fill();
+      }
+      if (isReady) drawSesbania(x + 0.3 * s, y - 2.2 * s, 0.55 * s);
+    }
+    if (!isReady && n.regrow_ticks) {
+      const k = 1 - n.regrow_ticks / regrowMax, cy = y - 1.5 * s;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.beginPath(); ctx.arc(x, cy, 0.5 * s, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "#9be38a"; ctx.beginPath(); ctx.arc(x, cy, 0.5 * s, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2); ctx.stroke();
+      text(Math.ceil(n.regrow_ticks / 60) + "s", x, cy + 4, { size: 10, align: "center", color: "#fff" });
+    }
+  });
+}
+
+function drawFishSchools(meta, p, underwater, s, sx, sy, t) {
+  const yields = meta.fish_yield || {};
+  (snap.fish || []).forEach((f) => {
+    const ph = (hashId(f.id) % 628) / 100;
+    const x = sx(f.pos[0]) + Math.sin(t * 0.7 + ph) * 0.5 * s, y = sy(f.pos[1]) + Math.sin(t * 1.3 + ph) * 0.3 * s;
+    const dir = Math.cos(t * 0.7 + ph) >= 0 ? 1 : -1;   // quay theo hướng đang lượn
+    const near = p && underwater && Math.hypot(p.pos[0] - f.pos[0], p.pos[1] - f.pos[1]) <= (meta.catch_radius || 2);
+    if (near) {
+      ctx.fillStyle = "rgba(128,222,234,.18)"; ctx.beginPath(); ctx.arc(x, y, 2.2 * s, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.save(); ctx.translate(x, y); ctx.scale(dir, 1);
+    if (f.kind === "ca_loc") {
+      const fr = Math.floor(t * 8 + ph) % 4, dw = 3.4 * s, dh = dw * 49 / 54;
+      if (!blit(RIVER_ASSETS.fishLoc, [fr * 54, 0, 54, 49], -dw / 2, -dh / 2, dw, dh)) {
+        ctx.fillStyle = kc(f.kind); ctx.beginPath(); ctx.ellipse(0, 0, 1.2 * s, 0.5 * s, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    } else {
+      for (const [ox, oy, o] of [[-0.9, -0.5, 0], [0.8, -0.15, 3], [-0.1, 0.6, 5]]) {
+        const fr = (Math.floor(t * 10) + o) % 8, dw = 1.9 * s, dh = dw / 2;
+        const bx = ox * s + Math.sin(t * 2 + o) * 0.15 * s, by = oy * s + Math.sin(t * 2.6 + o) * 0.12 * s;
+        if (!blit(RIVER_ASSETS.fishLinh, [fr * 32, 0, 32, 16], bx - dw / 2, by - dh / 2, dw, dh)) {
+          ctx.fillStyle = kc(f.kind); ctx.beginPath(); ctx.ellipse(bx, by, 0.6 * s, 0.25 * s, 0, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+    text((KIND_NAME[f.kind] || f.kind) + (yields[f.kind] ? " ×" + yields[f.kind] : ""), x, y + 2.1 * s, { size: 10, align: "center", color: "rgba(255,255,255,.7)" });
+    if (near) text("[Space] bắt", x, y - 2.1 * s, { size: 12, align: "center", color: "#ffe082" });
+  });
+}
+
+function gatherHint(meta, p, underwater) {
+  if (!p || underwater) return null;
+  const dp = meta.dock_pos || [2, 0];
+  if (Math.hypot(p.pos[0] - dp[0], p.pos[1] - dp[1]) <= (meta.dock_radius || 3)) return "[E] cập bến";
+  const r = meta.interact_radius || 2;
+  const ok = (snap.nodes || []).some((n) => n.ready !== false && Math.hypot(p.pos[0] - n.pos[0], p.pos[1] - n.pos[1]) <= r);
+  return ok ? "[E] hái" : null;
+}
+
 function drawGather(w, h) {
   const meta = snap.meta || {};
   const b = meta.bounds || { x: [0, 100], d: [0, 30] };
-  const X = b.x[1], D = b.d[1], SKY = 6;
-  const top = 64, bottom = 56;
-  const s = Math.max(1, Math.min((w - 20) / (X + 4), (h - top - bottom) / (D + SKY + 1)));
-  const ox = (w - s * (X + 4)) / 2 + 2 * s, oy = top + SKY * s;
+  const X = b.x[1], D = b.d[1], SKY = 7, top = 64, bottom = 64;
+  const s = Math.max(1, Math.min((w - 20) / (X + 4), (h - top - bottom) / (D + SKY + 2)));
+  const spare = Math.max(0, h - top - bottom - (D + SKY + 2) * s);   // màn hình cao hơn cần: dồn phần dư cho bầu trời
+  const ox = (w - s * (X + 4)) / 2 + 2 * s, oy = top + SKY * s + spare * 0.7;
   const sx = (x) => ox + x * s, sy = (d) => oy + d * s;
-  // trời + nước
-  ctx.fillStyle = "#cfeaf5"; ctx.fillRect(0, top, w, SKY * s);
-  const g = ctx.createLinearGradient(0, oy, 0, sy(D));
-  g.addColorStop(0, "#49b0dc"); g.addColorStop(1, "#08243f");
-  ctx.fillStyle = g; ctx.fillRect(sx(0), oy, X * s, D * s);
-  ctx.strokeStyle = "#e9f7ff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(0), oy); ctx.lineTo(sx(X), oy); ctx.stroke();
-  // vạch độ sâu
-  for (let d = 5; d <= D; d += 5) {
-    ctx.strokeStyle = "rgba(255,255,255,.08)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(sx(0), sy(d)); ctx.lineTo(sx(X), sy(d)); ctx.stroke();
-    text(d + " m", sx(0) + 4, sy(d) - 2, { size: 10, color: "rgba(255,255,255,.4)" });
-  }
-  // bến
-  const dp = meta.dock_pos || [2, 0], dr = meta.dock_radius || 3;
-  ctx.fillStyle = "#8d6e4b"; ctx.fillRect(sx(dp[0] - 1.5), sy(-0.7), 3 * s, 0.9 * s);
-  ctx.fillStyle = "#b9503a"; ctx.beginPath(); ctx.moveTo(sx(dp[0] - 1.8), sy(-0.7)); ctx.lineTo(sx(dp[0]), sy(-2.4)); ctx.lineTo(sx(dp[0] + 1.8), sy(-0.7)); ctx.fill();
-  ctx.strokeStyle = "rgba(255,230,150,.7)"; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(sx(dp[0]), sy(dp[1]), dr * s, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-  text("Bến (E)", sx(dp[0]), sy(-2.8), { size: 11, align: "center", color: "#5a3a22" });
-  // nút hái
-  (snap.nodes || []).forEach((n) => {
-    const ready = n.ready !== false;
-    ctx.globalAlpha = ready ? 1 : 0.35;
-    ctx.fillStyle = kc(n.kind); ctx.beginPath(); ctx.ellipse(sx(n.pos[0]), sy(n.pos[1]) - 0.1 * s, 0.9 * s, 0.4 * s, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 1;
-    text(n.id, sx(n.pos[0]), sy(n.pos[1]) - 0.7 * s, { size: 10, align: "center", color: "#234" });
-    if (!ready && n.regrow_ticks) text(Math.ceil(n.regrow_ticks / 60) + "s", sx(n.pos[0]), sy(n.pos[1]) + 1.1 * s, { size: 10, align: "center", color: "#fff" });
-  });
-  // đàn cá
-  (snap.fish || []).forEach((f) => {
-    ctx.save(); ctx.translate(sx(f.pos[0]), sy(f.pos[1])); ctx.rotate(((f.heading_deg || 0) * Math.PI) / 180);
-    ctx.fillStyle = kc(f.kind);
-    ctx.beginPath(); ctx.ellipse(0, 0, 0.9 * s, 0.45 * s, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(-0.8 * s, 0); ctx.lineTo(-1.4 * s, -0.4 * s); ctx.lineTo(-1.4 * s, 0.4 * s); ctx.fill();
-    ctx.restore();
-    text(f.id, sx(f.pos[0]), sy(f.pos[1]) - 0.7 * s, { size: 10, align: "center", color: "rgba(255,255,255,.8)" });
-  });
-  // người chơi
+  const t = performance.now() / 1000;
   const p = snap.player;
+  const underwater = p ? (p.at_surface === undefined ? p.pos[1] > 0.5 : !p.at_surface) : false;
+  const camX = p ? p.pos[0] / X - 0.5 : 0;
+
+  ctx.fillStyle = "#132029"; ctx.fillRect(0, top, w, h - top);
+  drawRiverSky(w, top, oy, s, sx, t);
+  drawUnderwater(w, oy, sy(D), h - bottom, s, sx, sy, D, camX, t);
+  drawSurfaceLine(w, oy, s, t);
+  drawDock(meta, s, sx, sy, t);
+  drawNodes(meta, s, sx, sy, t);
+  drawFishSchools(meta, p, underwater, s, sx, sy, t);
+
+  // Út Sen
+  playerScreen = null;
   if (p) {
     const px = sx(p.pos[0]), py = sy(p.pos[1]);
-    const underwater = p.at_surface === undefined ? p.pos[1] > 0.5 : !p.at_surface;
-    if (meta.catch_radius && underwater) { ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.beginPath(); ctx.arc(px, py, meta.catch_radius * s, 0, Math.PI * 2); ctx.stroke(); }
-    if (meta.interact_radius && !underwater) { ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.beginPath(); ctx.arc(px, py, meta.interact_radius * s, 0, Math.PI * 2); ctx.stroke(); }
-    if (!(p.invuln_ticks > 0 && Math.floor(snap.tick / 5) % 2)) {
-      const drawnDiver = drawDiver(p, px, py, s);
-      if (!drawnDiver) {
-        const heading = (p.heading_deg || 0) % 360;
-        const dirRow = (heading > 90 && heading < 270) ? 1 : 2;
-        const speed = p.vel ? Math.hypot(p.vel[0], p.vel[1]) : 0;
-        const frameCol = speed > 0.05 ? ([1, 0, 1, 2][Math.floor(snap.tick / 6) % 4]) : 1;
-        const pW = 0.85 * s, pH = 0.95 * s;
-        const drawn = drawPixelCharacter(2, dirRow, frameCol, px - pW / 2, py - pH / 2, pW, pH);
-        if (!drawn) {
-          ctx.fillStyle = "#ff8a3d"; ctx.beginPath(); ctx.arc(px, py, 0.45 * s, 0, Math.PI * 2); ctx.fill();
-        }
+    playerScreen = { x: px, y: py };
+    if (underwater) {   // bọt thở
+      for (let i = 0; i < 3; i++) {
+        const k = (t * 0.8 + i / 3) % 1;
+        blit(RIVER_ASSETS.bubbles, [0, 0, 23, 40], px + 0.5 * s + Math.sin(t * 3 + i) * 0.2 * s, py - 1.2 * s - k * 2.5 * s, 0.5 * s, 0.9 * s);
       }
-      const a = ((p.heading_deg || 0) * Math.PI) / 180;
-      ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * 0.8 * s, py + Math.sin(a) * 0.8 * s); ctx.stroke();
     }
+    if (!(p.invuln_ticks > 0 && Math.floor(snap.tick / 5) % 2)) {
+      if (!drawDiver(p, px, py, s, Math.max(56, 4.6 * s))) {
+        ctx.fillStyle = "#ff8a3d"; ctx.beginPath(); ctx.arc(px, py, 0.6 * s, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    const hint = gatherHint(meta, p, underwater);
+    if (hint) text(hint, px, py - 2.4 * s, { size: 12, align: "center", color: "#ffe082" });
   }
+
+  // oxy thấp: viền đỏ nhấp nháy
+  if (p && underwater && p.oxygen_max_ticks && p.oxygen_ticks < p.oxygen_max_ticks * 0.25) {
+    const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.max(w, h) * 0.7);
+    vg.addColorStop(0, "rgba(120,0,0,0)"); vg.addColorStop(1, `rgba(160,10,10,${0.25 + 0.15 * Math.sin(t * 6)})`);
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, w, h);
+  }
+
   // HUD trên
-  text("⏱ " + fmtTime(snap.time_left_ticks), 14, 28, { size: 20 });
+  ctx.fillStyle = "rgba(10,24,30,.9)"; ctx.fillRect(0, 0, w, top);
+  text("☀ Buổi sáng · Lặn & Hái", 14, 22, { size: 13, color: "#ffd59a" });
+  text("⏱ " + fmtTime(snap.time_left_ticks), 14, 50, { size: 20 });
   if (p && p.oxygen_ticks !== undefined && p.oxygen_max_ticks) {
     const low = p.oxygen_ticks < p.oxygen_max_ticks * 0.25;
-    bar(110, 12, 220, 18, p.oxygen_ticks / p.oxygen_max_ticks, low ? "#ef5350" : "#4fc3f7", "Oxy " + Math.ceil(p.oxygen_ticks / 60) + "s");
+    bar(130, 32, 240, 20, p.oxygen_ticks / p.oxygen_max_ticks, low ? "#ef5350" : "#4fc3f7", "Oxy " + Math.ceil(p.oxygen_ticks / 60) + "s");
   }
   if (p && p.hp !== undefined && p.hp_max) {
     let hs = "";
     for (let i = 0; i < p.hp_max; i++) hs += i < p.hp ? "♥" : "♡";
-    text(hs, 345, 29, { size: 22, color: "#ff6b81" });
+    text(hs, 386, 50, { size: 24, color: "#ff6b81" });
   }
-  if (p && p.pos) text(`x ${p.pos[0].toFixed(1)}  d ${p.pos[1].toFixed(1)}`, 14, 52, { size: 12, color: "#9fb3c0" });
-  if (p && p.catch_cd_ticks > 0) text("hồi chiêu bắt " + (p.catch_cd_ticks / 60).toFixed(1) + "s", 150, 52, { size: 12, color: "#9fb3c0" });
-  // giỏ (khoang) dưới
+  if (p && p.pos) text(underwater ? `độ sâu ${p.pos[1].toFixed(1)} m` : "trên mặt nước", 480, 48, { size: 13, color: "#9fb3c0" });
+  if (p && p.catch_cd_ticks > 0) text("hồi chiêu bắt " + (p.catch_cd_ticks / 60).toFixed(1) + "s", 600, 48, { size: 12, color: "#9fb3c0" });
+
+  // giỏ dưới
+  ctx.fillStyle = "rgba(10,24,30,.9)"; ctx.fillRect(0, h - bottom, w, bottom);
   if (snap.hold && snap.hold_capacity) {
-    const cap = snap.hold_capacity, sz = Math.min(30, (w - 260) / cap - 4), y0 = h - bottom + 8;
+    const cap = snap.hold_capacity, sz = Math.max(18, Math.min(34, (w - 360) / cap - 4)), y0 = h - bottom + 6;
     for (let i = 0; i < cap; i++) {
       const x0 = 14 + i * (sz + 4);
-      ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(x0, y0, sz, sz);
-      if (snap.hold[i]) { ctx.fillStyle = kc(snap.hold[i]); ctx.fillRect(x0 + 3, y0 + 3, sz - 6, sz - 6); }
+      ctx.fillStyle = "rgba(255,255,255,.10)"; ctx.fillRect(x0, y0, sz, sz);
+      ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.strokeRect(x0 + .5, y0 + .5, sz - 1, sz - 1);
+      if (snap.hold[i]) drawItemIcon(snap.hold[i], x0 + sz / 2, y0 + sz / 2, sz * 0.85);
     }
-    const names = {}; snap.hold.forEach((k) => (names[k] = (names[k] || 0) + 1));
-    text("Giỏ " + snap.hold.length + "/" + cap + "  " + Object.keys(names).map((k) => (KIND_NAME[k] || k) + "×" + names[k]).join(", "), 14, y0 + sz + 16, { size: 12, color: "#cfd8dc" });
+    const full = snap.hold.length >= cap;
+    text("Giỏ " + snap.hold.length + "/" + cap + "  " + itemsText(snap.hold), 14, y0 + sz + 16,
+         { size: 12, color: full ? "#ffab91" : "#cfd8dc" });
   }
-  text("WASD/mũi tên bơi · E hái / cập bến · Space bắt cá · R chơi lại", w - 10, h - 14, { size: 12, align: "right", color: "#9fb3c0" });
+  text("WASD bơi · E hái / cập bến · Space bắt cá · R lặn lại", w - 10, h - 14, { size: 12, align: "right", color: "#9fb3c0" });
+}
+
+// ===================== THÔNG BÁO NỔI (phản hồi hành động) =====================
+function eventMessage(e) {
+  const d = e.data || {}, nm = (k) => KIND_NAME[k] || k || "";
+  switch (e.name) {
+    case "gather": return { text: `+${d.count || 1} ${nm(d.kind)}`, color: "#ffe082" };
+    case "fish_caught": return { text: `+${d.count || 1} ${nm(d.kind)}`, color: "#80deea" };
+    case "hold_full": return { text: `Giỏ đầy! (cần ${d.needed ?? "?"} chỗ, còn ${d.free ?? "?"})`, color: "#ffab91" };
+    case "oxygen_empty": return { text: "Hết oxy! Mau nổi lên", color: "#ff8a80" };
+    case "choke": return { text: "Ngạt nước! −1 ♥", color: "#ff5252" };
+    case "faint": return { text: "Út Sen ngất xỉu…", color: "#ff5252" };
+    case "surface": return { text: "Hít một hơi", color: "#e0f7fa", small: true };
+    case "customer_arrived": return { text: "Khách gọi: " + (DISH_NAME[d.dish_id] || d.dish_id || "món"), color: "#c5e1a5" };
+    case "no_dish": return { text: "Không đủ nguyên liệu cho món nào!", color: "#ffab91" };
+    case "customer_left": return d.reason === "closing" ? null : { text: "Khách bỏ về! −0.5 ⭐", color: "#ff8a80" };
+    case "cook_started": return { text: "Bắt đầu nấu", color: "#ffcc80" };
+    case "dish_ready": return { text: "Món chín rồi!", color: "#a5d6a7" };
+    case "dish_picked": return { text: "Bưng món lên", color: "#fff59d" };
+    case "served": return { text: "Dọn món cho khách", color: "#a5d6a7" };
+    case "paid": return { text: `+${d.amount ?? ""}k`, color: "#ffd54f" };
+    default: return null;
+  }
+}
+const fx = {
+  seen: new Set(), primed: false, items: [],
+  reset() { this.seen = new Set(); this.primed = false; this.items = []; },
+  ingest() {
+    const fresh = [];
+    for (const e of (snap.events || [])) {
+      const key = snap.mode + "|" + e.tick + "|" + e.name + "|" + JSON.stringify(e.data);
+      if (!this.seen.has(key)) { this.seen.add(key); fresh.push(e); }
+    }
+    if (!this.primed) { this.primed = true; return; }   // mở trang giữa chừng: không phát lại sự kiện cũ
+    const now = performance.now();
+    for (const e of fresh) { const m = eventMessage(e); if (m) this.items.push(Object.assign(m, { born: now })); }
+    if (this.seen.size > 500) this.seen = new Set([...this.seen].slice(-250));
+  },
+  draw(w) {
+    const now = performance.now(), LIFE = 1600;
+    this.items = this.items.filter((it) => now - it.born < LIFE).slice(-5);
+    const a0 = snap.mode === "gather" && playerScreen ? playerScreen : { x: w / 2, y: 230 };
+    this.items.forEach((it, i) => {
+      const age = (now - it.born) / LIFE, y = a0.y - 44 - age * 46 - (this.items.length - 1 - i) * 19;
+      ctx.globalAlpha = 1 - age * age;
+      ctx.font = "bold " + (it.small ? 12 : 15) + "px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,.65)"; ctx.strokeText(it.text, a0.x, y);
+      ctx.fillStyle = it.color; ctx.fillText(it.text, a0.x, y);
+    });
+    ctx.globalAlpha = 1;
+  },
+};
+
+// ===================== BẢNG KẾT BUỔI =====================
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function overlay(w, h) {
+  if (offline) text("Mất kết nối tới máy chủ (đã tắt chưa?)", w / 2, 90, { align: "center", color: "#ff8a80", size: 16 });
+  if (snap.error) text("Luật của nhóm báo lỗi — xem terminal. R để chơi lại.", w / 2, 112, { align: "center", color: "#ff8a80", size: 15 });
+  if (!snap.finished) return;
+  const gather = snap.mode === "gather";
+  const bw = Math.min(560, w - 40), bh = 150, x0 = (w - bw) / 2, y0 = h / 2 - bh / 2;
+  ctx.fillStyle = "rgba(8,16,22,.86)"; roundRect(x0, y0, bw, bh, 14); ctx.fill();
+  ctx.strokeStyle = gather ? "rgba(255,213,154,.5)" : "rgba(255,213,79,.5)"; ctx.lineWidth = 2; ctx.stroke();
+  if (gather) {
+    text("Buổi sáng kết thúc — " + (REASON_VI[snap.reason] || snap.reason || ""), w / 2, y0 + 38, { align: "center", size: 21 });
+    const hold = snap.hold || [];
+    text(snap.reason === "fainted" ? "Ngất nên mất cả giỏ…" : "Mang về: " + itemsText(hold), w / 2, y0 + 70, { align: "center", size: 14, color: "#cfd8dc" });
+    const show = hold.slice(0, 12), sz = 26;
+    show.forEach((k, i) => drawItemIcon(k, w / 2 - (show.length * (sz + 4)) / 2 + i * (sz + 4) + sz / 2, y0 + 96, sz));
+    text(snap.can_continue ? "Enter: chèo xuồng về quán   ·   R: lặn lại" : "R: chơi lại", w / 2, y0 + 134,
+         { align: "center", size: 14, color: "#ffd54f" });
+  } else {
+    text("Hết ca tối! Quán đóng cửa", w / 2, y0 + 40, { align: "center", size: 21 });
+    text(`Tiền ${snap.money ?? 0}k · Uy tín ${(snap.reputation ?? 0).toFixed(1)} ⭐ · Điểm ${snap.score ?? 0}`, w / 2, y0 + 78,
+         { align: "center", size: 16, color: "#fff" });
+    text((snap.day_mode === "gather" ? "N: ngày mới (lặn lại từ sáng)   ·   " : "") + "R: chơi lại buổi tối", w / 2, y0 + 120,
+         { align: "center", size: 14, color: "#ffd54f" });
+  }
+}
+
+// ===================== CẢNH CHUYỂN: CHÈO XUỒNG VỀ QUÁN =====================
+let cut = null, fadeIn = 0, lastFrame = performance.now();
+const CUT_LEN = 7;
+function startCutscene() {
+  cut = { t0: performance.now(), skip: false, hold: (snap.hold || []).slice(), reason: snap.reason, requested: false, failed: false };
+  down.clear(); lastSent = ""; pushInput();
+}
+function drawRaftRestaurant(x, waterY, W, dusk, t) {
+  const H = W * 0.45;
+  ctx.fillStyle = "#2f2118"; ctx.fillRect(x - W / 2, waterY - H * 0.1, W, H * 0.16);          // phao
+  ctx.fillStyle = "#6b4a2e"; ctx.fillRect(x - W / 2, waterY - H * 0.22, W, H * 0.13);         // sàn bè
+  ctx.fillStyle = `rgba(255,186,104,${0.12 + 0.5 * dusk})`; ctx.fillRect(x - W * 0.45, waterY - H * 0.92, W * 0.9, H * 0.7);
+  ctx.fillStyle = "#4e3422";
+  for (const f of [-0.45, -0.15, 0.15, 0.45]) ctx.fillRect(x + W * f - 3, waterY - H * 0.95, 6, H * 0.75);
+  ctx.fillStyle = mixColor("#a0673f", "#5a3426", dusk);                                         // mái lá
+  ctx.beginPath(); ctx.moveTo(x - W * 0.6, waterY - H * 0.9); ctx.lineTo(x - W * 0.38, waterY - H * 1.38);
+  ctx.lineTo(x + W * 0.38, waterY - H * 1.38); ctx.lineTo(x + W * 0.6, waterY - H * 0.9); ctx.closePath(); ctx.fill();
+  for (let i = 0; i <= 14; i++) {                                                                // dây đèn
+    const k = i / 14, bx = x - W * 0.56 + k * W * 1.12, by = waterY - H * 0.9 + Math.sin(k * Math.PI) * H * 0.12;
+    ctx.fillStyle = `rgba(255,214,120,${(0.35 + 0.65 * dusk) * (0.8 + 0.2 * Math.sin(t * 4 + i))})`;
+    ctx.beginPath(); ctx.arc(bx, by, Math.max(2, W * 0.012), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = "#f4e2b8"; ctx.fillRect(x - W * 0.17, waterY - H * 1.3, W * 0.34, H * 0.2);  // biển hiệu
+  text("Quán Má Tư", x, waterY - H * 1.15, { size: Math.max(11, W * 0.05), align: "center", color: "#6b2f1a" });
+  for (let i = 0; i < 4; i++) {                                                                  // khói bếp
+    const k = (t * 0.35 + i / 4) % 1;
+    ctx.fillStyle = `rgba(230,230,230,${0.35 * (1 - k)})`;
+    ctx.beginPath(); ctx.arc(x - W * 0.3 + Math.sin(t + i) * 8, waterY - H * 1.4 - k * H * 1.2, W * 0.03 + k * W * 0.05, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = `rgba(255,200,110,${0.25 * dusk})`;                                            // bóng đèn trên mặt nước
+  for (let i = 0; i < 6; i++) ctx.fillRect(x - W * 0.4 + i * W * 0.16, waterY + 6 + (i % 2) * 5, W * 0.08, 2);
+}
+function drawCutscene(w, h) {
+  const el = (performance.now() - cut.t0) / 1000;
+  const k = cut.skip ? 1 : Math.min(1, el / CUT_LEN), t = el, dusk = Math.min(1, k * 1.15);
+  const horizon = h * 0.58, scroll = el * 70;
+  // trời từ sáng sang hoàng hôn
+  const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+  sky.addColorStop(0, mixColor("#f2b07c", "#2a2452", dusk));
+  sky.addColorStop(0.7, mixColor("#f8d9a8", "#c7607a", dusk));
+  sky.addColorStop(1, mixColor("#fbe9c8", "#f3a15c", dusk));
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, horizon + 2);
+  if (dusk > 0.6) {
+    ctx.fillStyle = `rgba(255,255,255,${(dusk - 0.6) * 2})`;
+    for (let i = 0; i < 40; i++) ctx.fillRect((i * 137) % w, (i * 71) % (horizon * 0.6), 2, 2);
+  }
+  const sunX = lerp(w * 0.2, w * 0.86, k), sunY = lerp(h * 0.16, horizon - 6, k);
+  const glow = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, h * 0.35);
+  glow.addColorStop(0, "rgba(255,214,150,.85)"); glow.addColorStop(1, "rgba(255,214,150,0)");
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, w, horizon);
+  ctx.fillStyle = mixColor("#fff1c1", "#ff9b54", k); ctx.beginPath(); ctx.arc(sunX, sunY, Math.min(w, h) * 0.045, 0, Math.PI * 2); ctx.fill();
+  // bờ xa: dừa nước + nhà sàn lên đèn (cuộn chậm = cảm giác chèo)
+  ctx.fillStyle = mixColor("#5d7656", "#1f2a2e", dusk); ctx.fillRect(0, horizon - 16, w, 18);
+  const span = w + 160;
+  for (let i = 0; i < span / 60; i++) {
+    const x = ((i * 60 - scroll * 0.3) % span + span) % span - 80;
+    drawNipa(x, horizon - 24, 15 + (i % 3) * 3, mixColor("#3f5b3a", "#141c1c", dusk));
+  }
+  const hspan = w + 340;
+  for (let i = 0; i < 5; i++) {
+    const x = ((i * 290 + 60 - scroll * 0.55) % hspan + hspan) % hspan - 170;
+    drawStiltHouse(x, horizon + 4, 11, Math.max(0, (dusk - 0.45) * 1.6));
+  }
+  // sông phù sa
+  const rv = ctx.createLinearGradient(0, horizon, 0, h);
+  rv.addColorStop(0, mixColor("#9c7d4c", "#3a3346", dusk)); rv.addColorStop(1, mixColor("#5b5a3a", "#141a24", dusk));
+  ctx.fillStyle = rv; ctx.fillRect(0, horizon, w, h - horizon);
+  for (let r = 0; r < 12; r++) {
+    const y = horizon + 8 + r * r * 2.6, sp = 0.4 + r * 0.12;
+    ctx.fillStyle = `rgba(255,240,210,${0.06 + r * 0.008})`;
+    for (let x = ((-scroll * sp) % 90 + 90) % 90 - 90 + (r % 2) * 45; x < w; x += 90) ctx.fillRect(x, y, 26 + r * 3, 2);
+  }
+  ctx.fillStyle = "rgba(255,200,130,.25)";   // vệt nắng phản chiếu
+  for (let i = 0; i < 10; i++) ctx.fillRect(sunX - 30 + Math.sin(t * 3 + i) * 10, horizon + 6 + i * 9, 60 - i * 4, 2);
+  // quán bè của Má Tư hiện ra
+  const rk = Math.max(0, (k - 0.35) / 0.5);
+  if (rk > 0) drawRaftRestaurant(lerp(w + 260, w * 0.73, easeOut(Math.min(1, rk))), horizon + h * 0.12, Math.min(w * 0.36, 380), dusk, t);
+  // xuồng của Út Sen
+  const len = Math.min(w * 0.3, 280), bx = w * 0.32 + Math.sin(t * 0.8) * 6, wy = h * 0.8 + Math.sin(t * 1.7) * 3;
+  const ch = len * 0.32;
+  const basketX = bx - len * 0.22, c = countItems(cut.hold), kinds = Object.keys(c);
+  ctx.fillStyle = "#b08850"; ctx.beginPath(); ctx.ellipse(basketX, wy - len * 0.115, len * 0.09, len * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+  kinds.forEach((kd, i) => drawItemIcon(kd, basketX - (kinds.length - 1) * len * 0.045 + i * len * 0.09, wy - len * 0.175, len * 0.085));
+  if (!drawPixelCharacter(2, 2, [1, 0, 1, 2][Math.floor(t * 5) % 4], bx - ch * 0.2, wy - ch * 1.28, ch, ch)) {
+    ctx.fillStyle = "#ff8a3d"; ctx.beginPath(); ctx.arc(bx + ch * 0.3, wy - ch * 0.8, ch * 0.25, 0, Math.PI * 2); ctx.fill();
+  }
+  const pa = Math.sin(t * 3) * 0.5;   // mái chèo
+  ctx.strokeStyle = "#7a5230"; ctx.lineWidth = Math.max(2, len * 0.014); ctx.beginPath();
+  ctx.moveTo(bx + ch * 0.45, wy - ch * 0.75); ctx.lineTo(bx + ch * 0.45 + Math.sin(pa) * len * 0.12 - len * 0.1, wy + len * 0.05); ctx.stroke();
+  drawBoat(bx, wy, len);
+  // phụ đề
+  ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(0, h - 78, w, 78);
+  text(cut.reason === "fainted" ? "Út Sen bị ngất, ghe hàng xóm đưa về… Tối nay quán đành bán ít món."
+                                : "Chiều xuống… Út Sen chèo xuồng về quán của Má Tư.", w / 2, h - 46, { align: "center", size: 18, color: "#fff3dc" });
+  text("Mang về: " + itemsText(cut.hold) + "   ·   Enter: bỏ qua", w / 2, h - 20, { align: "center", size: 13, color: "#cfd8dc" });
+  // mờ dần vào / ra
+  const fade = k < 0.08 ? 1 - k / 0.08 : k > 0.85 ? (k - 0.85) / 0.15 : 0;
+  if (fade > 0) { ctx.fillStyle = `rgba(0,0,0,${Math.min(1, fade)})`; ctx.fillRect(0, 0, w, h); }
+  if (k >= 0.86 && !cut.requested) {
+    const me = cut;
+    me.requested = true;
+    fetch("/next", { method: "POST" }).then((r) => { if (!r.ok) me.failed = true; }).catch(() => { me.failed = true; });
+  }
+  if (k >= 1) {
+    if (cut.failed) cut = null;
+    else if (snap && snap.mode === "quan") { cut = null; fadeIn = 1; fx.reset(); }
+  }
 }
 
 // ----- cảnh QUÁN: nhìn từ trên xuống, x sang phải, z lên (bắc) -----
@@ -640,14 +1114,61 @@ function drawQuan(w, h) {
   text("WASD/mũi tên di chuyển · E tương tác (bếp / bàn) · R chơi lại", w - 10, h - 14, { size: 12, align: "right", color: "#9fb3c0" });
 }
 
+// Log nút từ máy chủ: mỗi lần E/Space được luật nhận ở tick nào, ngữ cảnh, sự kiện sinh ra. L = ẩn/hiện.
+let lastPressLogged = "";
+// Bấm mà luật không làm gì (không sinh sự kiện): giải thích cho người chơi vì sao. Chỉ ở client.
+function pressHint(r) {
+  const c = r.context || "";
+  if (r.mode === "quan") {
+    if (c.startsWith("không có bếp/bàn")) return "Lại gần bếp hoặc bàn hơn (≤ 1.5 m)";
+    if (c.includes("bàn trống")) return "Bàn này chưa có khách";
+    if (c.includes("mục tiêu bàn") && c.includes("tay trống")) return "Tay trống — ra bếp nấu rồi bưng món ra bàn";
+    if (c.includes("mục tiêu bàn")) return "Món trên tay không phải món khách này gọi";
+    if (c.includes("bếp cooking")) return "Bếp đang nấu, chờ món chín";
+    if (c.includes("mục tiêu bếp") && !c.includes("tay trống")) return "Đang bưng món — mang ra bàn trước";
+    if (c.includes("bếp idle")) return "Chưa có đơn nào cần nấu";
+    return "Không làm được gì ở đây";
+  }
+  if (r.keys.includes("Space")) return c.startsWith("mặt nước") ? "Lặn xuống mới bắt được cá" : "Không có đàn cá nào trong tầm (≤ 2 m) hoặc đang hồi chiêu";
+  return c.startsWith("mặt nước") ? "Không có bông nào sẵn sàng trong tầm, hoặc chưa tới bến" : "Lên mặt nước mới hái / cập bến được";
+}
+function drawPressLog(w, h) {
+  const list = snap.presses || [];
+  if (list.length) {
+    const last = list[list.length - 1], key = last.tick + "|" + last.text;
+    if (key !== lastPressLogged) {
+      lastPressLogged = key;
+      (last.ok ? console.info : console.warn)("[nút]", last.text);
+      if (!last.ok && last.keys && fx.primed && last.mode === snap.mode && snap.tick - last.tick < 60)
+        fx.items.push({ text: pressHint(last), color: "#ffab91", born: performance.now() });
+    }
+  }
+  if (!showPressLog || !list.length) return;
+  const rows = list.slice(-6), lh = 15, bw = Math.min(760, w - 24), bh = rows.length * lh + 24;
+  const x0 = 12, y0 = h - (snap.mode === "gather" ? 70 : 46) - bh;
+  ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(x0, y0, bw, bh);
+  text("Log nút (L ẩn/hiện)", x0 + 8, y0 + 14, { size: 11, color: "#9fb3c0" });
+  rows.forEach((r, i) => {
+    let s = r.text; if (s.length > 120) s = s.slice(0, 117) + "…";
+    text(s, x0 + 8, y0 + 30 + i * lh, { size: 11, color: r.ok ? "#c8e6c9" : "#ff8a80" });
+  });
+}
+
 function frame() {
   requestAnimationFrame(frame);  // đặt trước để lỗi vẽ không làm dừng vòng lặp
+  const now = performance.now(), dt = Math.min(0.1, (now - lastFrame) / 1000);
+  lastFrame = now;
   const [w, h] = fit();
   ctx.fillStyle = "#10161c"; ctx.fillRect(0, 0, w, h);
+  if (cut) { drawCutscene(w, h); return; }
   if (snap) {
-    if (snap.mode === "quan") drawQuan(w, h); else drawGather(w, h);
+    fx.ingest();
+    if (snap.mode === "quan") { ctx.imageSmoothingEnabled = true; drawQuan(w, h); } else drawGather(w, h);
+    fx.draw(w);
     eventLog(w, h);
+    drawPressLog(w, h);
     overlay(w, h);
+    if (fadeIn > 0) { ctx.fillStyle = `rgba(0,0,0,${fadeIn})`; ctx.fillRect(0, 0, w, h); fadeIn = Math.max(0, fadeIn - dt / 0.9); }
   } else {
     text(offline ? "Không kết nối được máy chủ…" : "Đang tải…", w / 2, h / 2, { align: "center", size: 18 });
   }
